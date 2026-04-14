@@ -1,27 +1,36 @@
 """
 データベース処理
-保有株・取引履歴・資金残高を SQLite に保存します
+保有株・取引履歴・資金残高・財務データを SQLite に保存します
 """
 import sqlite3
-from datetime import datetime
+from datetime import datetime, date
 from typing import List, Dict, Optional
 
 DB_PATH = "investment.db"
-INITIAL_CAPITAL = 1_000_000  # 初期資金 100万円
+INITIAL_CAPITAL = 2_000_000  # 初期資金 200万円
 
 
 def get_conn():
     conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row  # dict風に取得できるようにする
+    conn.row_factory = sqlite3.Row
     return conn
 
 
+def _add_column_if_not_exists(cur, table: str, column: str, col_type: str):
+    """列が存在しなければ追加する（2回目以降のinit_dbでエラーにならないように）"""
+    try:
+        cur.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
+    except sqlite3.OperationalError:
+        pass  # すでに存在する
+
+
 def init_db():
-    """テーブルを初期化する（初回起動時のみ実行）"""
+    """テーブルを初期化する"""
     conn = get_conn()
     cur = conn.cursor()
 
-    # 資金テーブル（1行のみ）
+    # ── 既存テーブル ──────────────────────────────────────────
+
     cur.execute("""
         CREATE TABLE IF NOT EXISTS account (
             id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -31,7 +40,6 @@ def init_db():
         )
     """)
 
-    # 保有株テーブル
     cur.execute("""
         CREATE TABLE IF NOT EXISTS portfolio (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -43,7 +51,16 @@ def init_db():
         )
     """)
 
-    # 取引履歴テーブル
+    # portfolioテーブルにファンダメンタル列を追加（既存DBとの互換性）
+    for col, typ in [
+        ("buy_per",             "REAL"),
+        ("buy_pbr",             "REAL"),
+        ("buy_net_cash_ratio",  "REAL"),
+        ("target_price",        "REAL"),
+        ("catalyst_notes",      "TEXT"),
+    ]:
+        _add_column_if_not_exists(cur, "portfolio", col, typ)
+
     cur.execute("""
         CREATE TABLE IF NOT EXISTS trades (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -59,7 +76,6 @@ def init_db():
         )
     """)
 
-    # 資産推移テーブル（グラフ用）
     cur.execute("""
         CREATE TABLE IF NOT EXISTS asset_history (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -67,6 +83,43 @@ def init_db():
             cash REAL NOT NULL,
             stock_value REAL NOT NULL,
             recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    # ── 新テーブル ────────────────────────────────────────────
+
+    # 財務データキャッシュ（1日1回だけAPIを叩く）
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS fundamental_cache (
+            ticker TEXT PRIMARY KEY,
+            company_name TEXT,
+            market_cap_oku REAL,
+            per REAL,
+            pbr REAL,
+            current_assets_oku REAL,
+            total_liabilities_oku REAL,
+            net_cash_oku REAL,
+            net_cash_ratio REAL,
+            dividend_yield REAL,
+            sector TEXT,
+            last_updated DATE
+        )
+    """)
+
+    # スクリーニング通過銘柄（投資候補）
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS screened_stocks (
+            ticker TEXT PRIMARY KEY,
+            company_name TEXT,
+            market_cap_oku REAL,
+            per REAL,
+            pbr REAL,
+            current_assets_oku REAL,
+            total_liabilities_oku REAL,
+            net_cash_oku REAL,
+            net_cash_ratio REAL,
+            score REAL,
+            screened_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
 
@@ -87,7 +140,6 @@ def init_db():
 # ==================== 資金操作 ====================
 
 def get_account() -> Dict:
-    """現在の資金情報を取得"""
     conn = get_conn()
     row = conn.execute("SELECT * FROM account WHERE id = 1").fetchone()
     conn.close()
@@ -95,7 +147,6 @@ def get_account() -> Dict:
 
 
 def update_cash(new_cash: float):
-    """現金残高を更新"""
     conn = get_conn()
     conn.execute(
         "UPDATE account SET cash = ?, updated_at = ? WHERE id = 1",
@@ -108,7 +159,6 @@ def update_cash(new_cash: float):
 # ==================== ポートフォリオ操作 ====================
 
 def get_portfolio() -> List[Dict]:
-    """保有株を全件取得"""
     conn = get_conn()
     rows = conn.execute("SELECT * FROM portfolio ORDER BY ticker").fetchall()
     conn.close()
@@ -116,30 +166,44 @@ def get_portfolio() -> List[Dict]:
 
 
 def get_holding(ticker: str) -> Optional[Dict]:
-    """指定銘柄の保有情報を取得"""
     conn = get_conn()
     row = conn.execute("SELECT * FROM portfolio WHERE ticker = ?", (ticker,)).fetchone()
     conn.close()
     return dict(row) if row else None
 
 
-def upsert_holding(ticker: str, company_name: str, shares: int, avg_cost: float):
-    """保有株を追加・更新"""
+def upsert_holding(
+    ticker: str,
+    company_name: str,
+    shares: int,
+    avg_cost: float,
+    buy_per: Optional[float] = None,
+    buy_pbr: Optional[float] = None,
+    buy_net_cash_ratio: Optional[float] = None,
+    target_price: Optional[float] = None,
+    catalyst_notes: Optional[str] = None,
+):
+    """保有株を追加・更新（ファンダメンタル情報も一緒に保存）"""
     conn = get_conn()
     conn.execute("""
-        INSERT INTO portfolio (ticker, company_name, shares, avg_cost)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO portfolio
+            (ticker, company_name, shares, avg_cost,
+             buy_per, buy_pbr, buy_net_cash_ratio, target_price, catalyst_notes)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(ticker) DO UPDATE SET
             shares = ?,
             avg_cost = ?,
             company_name = ?
-    """, (ticker, company_name, shares, avg_cost, shares, avg_cost, company_name))
+    """, (
+        ticker, company_name, shares, avg_cost,
+        buy_per, buy_pbr, buy_net_cash_ratio, target_price, catalyst_notes,
+        shares, avg_cost, company_name,
+    ))
     conn.commit()
     conn.close()
 
 
 def delete_holding(ticker: str):
-    """保有株を削除（全売却時）"""
     conn = get_conn()
     conn.execute("DELETE FROM portfolio WHERE ticker = ?", (ticker,))
     conn.commit()
@@ -149,16 +213,10 @@ def delete_holding(ticker: str):
 # ==================== 取引履歴 ====================
 
 def save_trade(
-    ticker: str,
-    company_name: str,
-    action: str,
-    shares: int,
-    price: float,
-    total_amount: float,
-    commission: float,
-    reason: str,
+    ticker: str, company_name: str, action: str,
+    shares: int, price: float, total_amount: float,
+    commission: float, reason: str,
 ):
-    """取引を記録する"""
     conn = get_conn()
     conn.execute("""
         INSERT INTO trades
@@ -170,7 +228,6 @@ def save_trade(
 
 
 def get_trades(limit: int = 50) -> List[Dict]:
-    """取引履歴を最新順で取得"""
     conn = get_conn()
     rows = conn.execute(
         "SELECT * FROM trades ORDER BY executed_at DESC LIMIT ?", (limit,)
@@ -182,18 +239,16 @@ def get_trades(limit: int = 50) -> List[Dict]:
 # ==================== 資産推移 ====================
 
 def save_asset_snapshot(total_assets: float, cash: float, stock_value: float):
-    """現在の資産状況をスナップショット保存（グラフ用）"""
     conn = get_conn()
-    conn.execute("""
-        INSERT INTO asset_history (total_assets, cash, stock_value)
-        VALUES (?, ?, ?)
-    """, (total_assets, cash, stock_value))
+    conn.execute(
+        "INSERT INTO asset_history (total_assets, cash, stock_value) VALUES (?, ?, ?)",
+        (total_assets, cash, stock_value)
+    )
     conn.commit()
     conn.close()
 
 
 def get_asset_history(days: int = 30) -> List[Dict]:
-    """資産推移を取得（1日1件）"""
     conn = get_conn()
     rows = conn.execute("""
         SELECT
@@ -210,18 +265,118 @@ def get_asset_history(days: int = 30) -> List[Dict]:
     return [dict(r) for r in rows]
 
 
+# ==================== 財務データキャッシュ ====================
+
+def get_fundamental_cache(ticker: str) -> Optional[Dict]:
+    """今日のキャッシュがあれば返す（なければNone）"""
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT * FROM fundamental_cache WHERE ticker = ? AND last_updated = ?",
+        (ticker, date.today().isoformat())
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def save_fundamental_cache(data: Dict):
+    """財務データをキャッシュに保存（upsert）"""
+    conn = get_conn()
+    conn.execute("""
+        INSERT INTO fundamental_cache
+            (ticker, company_name, market_cap_oku, per, pbr,
+             current_assets_oku, total_liabilities_oku, net_cash_oku,
+             net_cash_ratio, dividend_yield, sector, last_updated)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(ticker) DO UPDATE SET
+            company_name = ?, market_cap_oku = ?, per = ?, pbr = ?,
+            current_assets_oku = ?, total_liabilities_oku = ?,
+            net_cash_oku = ?, net_cash_ratio = ?,
+            dividend_yield = ?, sector = ?, last_updated = ?
+    """, (
+        data["ticker"], data["company_name"], data["market_cap_oku"],
+        data["per"], data["pbr"], data["current_assets_oku"],
+        data["total_liabilities_oku"], data["net_cash_oku"],
+        data["net_cash_ratio"], data.get("dividend_yield"),
+        data.get("sector"), data["last_updated"],
+        # UPDATE SET の値
+        data["company_name"], data["market_cap_oku"], data["per"], data["pbr"],
+        data["current_assets_oku"], data["total_liabilities_oku"],
+        data["net_cash_oku"], data["net_cash_ratio"],
+        data.get("dividend_yield"), data.get("sector"), data["last_updated"],
+    ))
+    conn.commit()
+    conn.close()
+
+
+# ==================== スクリーニング ====================
+
+def save_screened_stock(data: Dict):
+    conn = get_conn()
+    conn.execute("""
+        INSERT INTO screened_stocks
+            (ticker, company_name, market_cap_oku, per, pbr,
+             current_assets_oku, total_liabilities_oku, net_cash_oku,
+             net_cash_ratio, score)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(ticker) DO UPDATE SET
+            company_name = ?, market_cap_oku = ?, per = ?, pbr = ?,
+            current_assets_oku = ?, total_liabilities_oku = ?,
+            net_cash_oku = ?, net_cash_ratio = ?, score = ?,
+            screened_at = CURRENT_TIMESTAMP
+    """, (
+        data["ticker"], data["company_name"], data["market_cap_oku"],
+        data["per"], data["pbr"], data["current_assets_oku"],
+        data["total_liabilities_oku"], data["net_cash_oku"],
+        data["net_cash_ratio"], data["score"],
+        data["company_name"], data["market_cap_oku"], data["per"], data["pbr"],
+        data["current_assets_oku"], data["total_liabilities_oku"],
+        data["net_cash_oku"], data["net_cash_ratio"], data["score"],
+    ))
+    conn.commit()
+    conn.close()
+
+
+def get_screened_stocks() -> List[Dict]:
+    """スクリーニング通過銘柄をスコア降順で取得"""
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT * FROM screened_stocks ORDER BY score DESC"
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def clear_screened_stocks():
+    """スクリーニング結果をクリア（再スクリーニング前に実行）"""
+    conn = get_conn()
+    conn.execute("DELETE FROM screened_stocks")
+    conn.commit()
+    conn.close()
+
+
+def is_screened(ticker: str) -> bool:
+    """指定銘柄がスクリーニング通過中か確認"""
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT ticker FROM screened_stocks WHERE ticker = ?", (ticker,)
+    ).fetchone()
+    conn.close()
+    return row is not None
+
+
 # ==================== リセット ====================
 
 def reset_all():
-    """全データをリセットして初期状態に戻す"""
+    """全データをリセットして初期状態（200万円）に戻す"""
     conn = get_conn()
     conn.execute("DELETE FROM portfolio")
     conn.execute("DELETE FROM trades")
     conn.execute("DELETE FROM asset_history")
+    conn.execute("DELETE FROM screened_stocks")
     conn.execute(
-        "UPDATE account SET cash = ?, updated_at = ? WHERE id = 1",
-        (INITIAL_CAPITAL, datetime.now().isoformat())
+        "UPDATE account SET cash = ?, initial_capital = ?, updated_at = ? WHERE id = 1",
+        (INITIAL_CAPITAL, INITIAL_CAPITAL, datetime.now().isoformat())
     )
     conn.commit()
     conn.close()
-    print("🔄 データをリセットしました")
+    print("🔄 データをリセットしました（初期資金200万円）")
