@@ -449,6 +449,59 @@ def is_screened(ticker: str) -> bool:
     return row is not None
 
 
+# ==================== 確定損益（買い→売りペア） ====================
+
+def get_closed_trades(limit: int = 30) -> List[Dict]:
+    """
+    完了済み取引（買い→売りのペア）を返す
+    直近の sell をベースに、同銘柄の直近 buy と突き合わせて損益を計算する
+    """
+    conn = get_conn()
+    # 同じ銘柄・日時・価格の重複レコードを除外（MIN(id)を使って最初の1件だけ取得）
+    sells = conn.execute("""
+        SELECT * FROM trades
+        WHERE id IN (
+            SELECT MIN(id) FROM trades
+            WHERE action='sell'
+            GROUP BY ticker, executed_at, price
+        )
+        ORDER BY executed_at DESC LIMIT ?
+    """, (limit,)).fetchall()
+
+    result = []
+    for sell in sells:
+        sell = dict(sell)
+        buy = conn.execute("""
+            SELECT * FROM trades WHERE ticker=? AND action='buy'
+            AND executed_at <= ?
+            ORDER BY executed_at DESC LIMIT 1
+        """, (sell["ticker"], sell["executed_at"])).fetchone()
+        buy = dict(buy) if buy else None
+
+        buy_price = buy["price"] if buy else sell["price"]
+        shares = sell["shares"]
+        sell_price = sell["price"]
+        commission = sell["commission"]
+        pnl = (sell_price - buy_price) * shares - commission
+        pnl_pct = ((sell_price / buy_price) - 1) * 100 if buy_price else 0
+
+        result.append({
+            "ticker":       sell["ticker"],
+            "company_name": sell["company_name"],
+            "buy_price":    round(buy_price, 1),
+            "sell_price":   round(sell_price, 1),
+            "shares":       shares,
+            "pnl":          round(pnl, 0),
+            "pnl_pct":      round(pnl_pct, 2),
+            "reason":       sell["reason"],
+            "sell_date":    sell["executed_at"],
+            "buy_date":     buy["executed_at"] if buy else None,
+        })
+
+    conn.close()
+    return result
+
+
 # ==================== リセット ====================
 
 def reset_all():

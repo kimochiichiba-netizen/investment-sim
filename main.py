@@ -19,6 +19,7 @@ from database import (
     get_asset_history,
     get_screened_stocks,
     get_trade_stats,
+    get_closed_trades,
     reset_all,
 )
 from fundamental_data import get_fundamental, get_current_price
@@ -177,6 +178,13 @@ async def get_scheduler_status():
 async def get_stats():
     """取引統計（勝率・累計損益）を返す"""
     return get_trade_stats()
+
+
+@app.get("/api/trade-pairs")
+async def get_trade_pairs_api(limit: int = 30):
+    """確定損益つき取引ペア一覧を返す（売り完了分のみ）"""
+    pairs = get_closed_trades(limit)
+    return {"pairs": pairs}
 
 
 # ── 清原式専用エンドポイント ──────────────────────────────

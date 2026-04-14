@@ -60,21 +60,21 @@ except ImportError:
 MAX_HOLDINGS           = 10     # 最大保有銘柄数
 MIN_POSITION_RATIO     = 0.05   # 最小投資比率（総資産の5%）
 MAX_POSITION_RATIO     = 0.15   # 最大投資比率（総資産の15%）
-MIN_CASH_RATIO         = 0.20   # 常に現金20%以上を維持
+MIN_CASH_RATIO         = 0.25   # 常に現金25%以上を維持（余裕を増やす）
 COMMISSION_RATE        = 0.001  # 手数料 0.1%
 MIN_COMMISSION         = 100    # 最低手数料 100円
 
 # ── トレーリングストップ設定 ──────────────────────────────
-TRAIL_INITIAL_PCT      = 0.85   # 初期ストップ: 最高値の 85%（= -15%）
-TRAIL_TIGHT_PCT        = 0.90   # 引き締め後: 最高値の 90%（= -10%）
-TRAIL_TIGHTEN_TRIGGER  = 30.0   # 含み益がこの%を超えたらストップを引き締める
+TRAIL_INITIAL_PCT      = 0.92   # 初期ストップ: 最高値の 92%（= -8%）損切り素早く
+TRAIL_TIGHT_PCT        = 0.94   # 引き締め後: 最高値の 94%（= -6%）利益をしっかり守る
+TRAIL_TIGHTEN_TRIGGER  = 15.0   # 含み益が+15%を超えたら早めにストップを引き締める
 
 # ── 利確設定 ────────────────────────────────────────────
-PROFIT_TARGET_FULL     = 100.0  # 全部売り: +100%（2倍）
-PROFIT_TARGET_PARTIAL  = 50.0   # 半分売り: +50%（1回のみ）
+PROFIT_TARGET_FULL     = 30.0   # 全部売り: +30%（確実に利益を取る）
+PROFIT_TARGET_PARTIAL  = 15.0   # 半分売り: +15%（早めに半分確定）
 
 # ── テクニカルフィルター ─────────────────────────────────
-RSI_MAX_FOR_BUY        = 65     # 買い時のRSI上限（これ以上は買わない）
+RSI_MAX_FOR_BUY        = 60     # 買い時のRSI上限（過熱気味の銘柄を避ける）
 
 
 def calc_commission(amount: float) -> float:
@@ -282,10 +282,10 @@ def run_buy_execution() -> Dict:
         if len(held_tickers) >= MAX_HOLDINGS:
             break
 
-        # ── クールダウンチェック（7日以内に売った銘柄は再購入しない）──
+        # ── クールダウンチェック（3日以内に売った銘柄は再購入しない）──
         # 売ってすぐ買い直すと手数料が二重にかかるため
-        if recently_sold(ticker, days=7):
-            print(f"  ⏸ {ticker} 直近7日以内に売却済み → クールダウン中のためスキップ")
+        if recently_sold(ticker, days=3):
+            print(f"  ⏸ {ticker} 直近3日以内に売却済み → クールダウン中のためスキップ")
             continue
 
         current_price = prices.get(ticker)

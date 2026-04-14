@@ -132,12 +132,13 @@
     .stop-price { font-size: 11px; color: var(--red); font-weight: 600; }
 
     /* ── グリッド（下段） ── */
-    .bottom-grid { display: grid; grid-template-columns: 55% 45%; gap: 14px; }
+    .bottom-grid { display: grid; grid-template-columns: 1fr; gap: 14px; }
+    .bottom-history-grid { display: grid; grid-template-columns: 55% 45%; gap: 14px; }
     .chart-box {
       background: var(--surface); border: 1px solid var(--border);
       border-radius: 12px; padding: 16px;
     }
-    .chart-box canvas { max-height: 230px; }
+    .chart-box canvas { max-height: 350px; }
 
     /* ── 空状態 ── */
     .empty { text-align: center; padding: 36px; color: var(--muted); font-size: 12px; }
@@ -194,7 +195,7 @@
 
     @media (max-width: 1100px) {
       .cards { grid-template-columns: repeat(3, 1fr); }
-      .bottom-grid { grid-template-columns: 1fr; }
+      .bottom-history-grid { grid-template-columns: 1fr; }
     }
     @media (max-width: 700px) {
       .cards { grid-template-columns: repeat(2, 1fr); }
@@ -341,10 +342,12 @@
     </div>
   </section>
 
-  <!-- 下段: チャート + 取引履歴 -->
-  <div class="bottom-grid section" style="margin-bottom:0">
+  <!-- 下段: チャート（全幅） -->
+  <div class="bottom-grid section">
     <div>
-      <div class="section-title">💹 資産推移（過去60日）</div>
+      <div class="section-title">💹 資産推移（過去60日）
+        <span class="hint-text" id="chart-baseline-hint"></span>
+      </div>
       <div class="chart-box">
         <canvas id="asset-chart"></canvas>
         <div id="chart-empty" class="empty" style="display:none;">
@@ -352,12 +355,38 @@
         </div>
       </div>
     </div>
+  </div>
+
+  <!-- 確定済み取引 + 全取引ログ（2列） -->
+  <div class="bottom-history-grid section" style="margin-bottom:0">
+    <!-- 確定済み取引（買い→売りペア・損益付き） -->
     <div>
       <div class="section-title">
-        📋 取引履歴
+        ✅ 確定済み取引（損益）
+        <span class="count-badge" id="pairs-count">0件</span>
+        <span class="hint-text">売却した取引のみ表示</span>
+      </div>
+      <div class="table-wrap" style="max-height:300px;overflow-y:auto;">
+        <table>
+          <thead>
+            <tr>
+              <th>売却日</th><th>銘柄</th><th>買値</th><th>売値</th><th>確定損益</th><th>損益率</th><th>理由</th>
+            </tr>
+          </thead>
+          <tbody id="pairs-tbody">
+            <tr><td colspan="7" class="empty">売却済み取引なし</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 全取引ログ -->
+    <div>
+      <div class="section-title">
+        📋 全取引ログ
         <span class="count-badge" id="trades-count">0件</span>
       </div>
-      <div class="table-wrap" style="max-height:295px;overflow-y:auto;">
+      <div class="table-wrap" style="max-height:300px;overflow-y:auto;">
         <table>
           <thead>
             <tr>
@@ -552,6 +581,14 @@ async function fetchScreened() {
   } catch(e) { console.error(e); }
 }
 
+function fmtDt(str) {
+  if (!str) return '—';
+  return new Date(str).toLocaleString('ja-JP', {
+    year: 'numeric', month: 'numeric', day: 'numeric',
+    hour: '2-digit', minute: '2-digit'
+  });
+}
+
 async function fetchTrades() {
   try {
     const d = await (await fetch('/api/trades?limit=40')).json();
@@ -564,19 +601,49 @@ async function fetchTrades() {
     }
     tbody.innerHTML = trades.map(t => {
       const isBuy = t.action === 'buy';
-      const dt = t.executed_at
-        ? new Date(t.executed_at).toLocaleString('ja-JP', {month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})
-        : '—';
       return `<tr>
-        <td class="text-muted" style="font-size:11px;white-space:nowrap">${dt}</td>
+        <td class="text-muted" style="font-size:11px;white-space:nowrap">${fmtDt(t.executed_at)}</td>
         <td><strong>${esc(t.company_name)}</strong><br><span style="font-size:10px;color:var(--muted)">${esc(t.ticker)}</span></td>
         <td><span class="badge ${isBuy ? 'badge-buy' : 'badge-sell'}">${isBuy ? '買い' : '売り'}</span></td>
         <td>${Number(t.shares).toLocaleString()}株</td>
         <td>${Number(t.price).toLocaleString()}円</td>
-        <td style="color:var(--muted);font-size:11px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.reason||'—')}</td>
+        <td style="color:var(--muted);font-size:11px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.reason||'—')}</td>
       </tr>`;
     }).join('');
   } catch(e) {}
+}
+
+async function fetchClosedTrades() {
+  try {
+    const d = await (await fetch('/api/trade-pairs?limit=30')).json();
+    const pairs = d.pairs || [];
+    document.getElementById('pairs-count').textContent = pairs.length + '件';
+    const tbody = document.getElementById('pairs-tbody');
+    if (!pairs.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="empty">売却済み取引なし</td></tr>';
+      return;
+    }
+    tbody.innerHTML = pairs.map(p => {
+      const pnl = p.pnl || 0;
+      const pct = p.pnl_pct || 0;
+      const color = pnl > 0 ? 'text-green' : pnl < 0 ? 'text-red' : 'text-muted';
+      const sign  = pnl > 0 ? '+' : '';
+      // 売却理由を短く表示（30文字まで）
+      const reason = p.reason ? (p.reason.length > 30 ? p.reason.slice(0, 30) + '…' : p.reason) : '—';
+      return `<tr>
+        <td class="text-muted" style="font-size:11px;white-space:nowrap">${fmtDt(p.sell_date)}</td>
+        <td>
+          <strong>${esc(p.company_name)}</strong>
+          <br><span style="font-size:10px;color:var(--muted)">${esc(p.ticker)} ×${Number(p.shares).toLocaleString()}株</span>
+        </td>
+        <td class="text-muted" style="font-size:12px">${Number(p.buy_price).toLocaleString()}円</td>
+        <td style="font-size:12px">${Number(p.sell_price).toLocaleString()}円</td>
+        <td class="${color}" style="font-weight:700">${sign}${Number(pnl).toLocaleString()}円</td>
+        <td class="${color}" style="font-weight:700">${sign}${pct.toFixed(2)}%</td>
+        <td style="color:var(--muted);font-size:11px;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(reason)}</td>
+      </tr>`;
+    }).join('');
+  } catch(e) { console.error(e); }
 }
 
 async function fetchChart() {
@@ -588,35 +655,122 @@ async function fetchChart() {
     if (!hist.length) { canvas.style.display='none'; empty.style.display='block'; return; }
     canvas.style.display='block'; empty.style.display='none';
 
-    const labels = hist.map(h => { const dt=new Date(h.date); return `${dt.getMonth()+1}/${dt.getDate()}`; });
+    const labels = hist.map(h => {
+      const dt = new Date(h.date);
+      return `${dt.getFullYear()}/${dt.getMonth()+1}/${dt.getDate()}`;
+    });
+    const INITIAL = 2_000_000;
+
+    // 最新の損益状況をヒントに表示
+    const latest = hist[hist.length - 1];
+    if (latest) {
+      const diff = latest.total_assets - INITIAL;
+      const pct  = ((diff / INITIAL) * 100).toFixed(2);
+      const sign = diff >= 0 ? '+' : '';
+      document.getElementById('chart-baseline-hint').textContent =
+        `初期比: ${sign}${Number(diff).toLocaleString()}円 (${sign}${pct}%)`;
+    }
+
+    // グラデーション塗りつぶし
+    const ctx = canvas.getContext('2d');
+    const grad = ctx.createLinearGradient(0, 0, 0, 350);
+    grad.addColorStop(0,   'rgba(91,156,246,0.35)');
+    grad.addColorStop(0.6, 'rgba(91,156,246,0.08)');
+    grad.addColorStop(1,   'rgba(91,156,246,0.00)');
+
     if (assetChart) assetChart.destroy();
     assetChart = new Chart(canvas, {
       type: 'line',
       data: {
         labels,
         datasets: [
-          { label:'総資産',     data:hist.map(h=>h.total_assets), borderColor:'#5b9cf6', backgroundColor:'rgba(91,156,246,0.08)', borderWidth:2.5, fill:true,  tension:0.3, pointRadius:2 },
-          { label:'現金',       data:hist.map(h=>h.cash),         borderColor:'#4a5568', borderWidth:1.5, borderDash:[4,3], fill:false, tension:0.3, pointRadius:0 },
-          { label:'株式評価額', data:hist.map(h=>h.stock_value),  borderColor:'#22c55e', borderWidth:1.5, fill:false, tension:0.3, pointRadius:0 },
+          // 総資産（グラデーション塗りつぶし）
+          {
+            label: '総資産',
+            data: hist.map(h => h.total_assets),
+            borderColor: '#5b9cf6',
+            backgroundColor: grad,
+            borderWidth: 2.5,
+            fill: true,
+            tension: 0.35,
+            pointRadius: hist.length <= 10 ? 4 : 2,
+            pointHoverRadius: 5,
+            order: 1,
+          },
+          // 初期資金 200万円の基準線（破線）
+          {
+            label: '初期資金(200万)',
+            data: Array(labels.length).fill(INITIAL),
+            borderColor: '#f59e0b',
+            borderWidth: 1.5,
+            borderDash: [6, 4],
+            pointRadius: 0,
+            fill: false,
+            tension: 0,
+            order: 3,
+          },
+          // 現金
+          {
+            label: '現金',
+            data: hist.map(h => h.cash),
+            borderColor: '#4a5568',
+            borderWidth: 1.5,
+            borderDash: [4, 3],
+            fill: false,
+            tension: 0.3,
+            pointRadius: 0,
+            order: 2,
+          },
+          // 株式評価額
+          {
+            label: '株式評価額',
+            data: hist.map(h => h.stock_value),
+            borderColor: '#22c55e',
+            borderWidth: 1.5,
+            fill: false,
+            tension: 0.3,
+            pointRadius: 0,
+            order: 2,
+          },
         ],
       },
       options: {
         responsive: true,
-        interaction: { mode:'index', intersect:false },
+        interaction: { mode: 'index', intersect: false },
         plugins: {
-          legend: { labels:{ color:'#7a859a', font:{size:11} } },
-          tooltip: { callbacks:{ label: ctx => `${ctx.dataset.label}: ${Number(ctx.raw).toLocaleString()}円` } },
+          legend: { labels: { color: '#7a859a', font: { size: 11 } } },
+          tooltip: {
+            callbacks: {
+              label: ctx => {
+                const val = Number(ctx.raw).toLocaleString();
+                if (ctx.dataset.label === '総資産') {
+                  const diff = ctx.raw - INITIAL;
+                  const sign = diff >= 0 ? '+' : '';
+                  const pct  = ((diff / INITIAL) * 100).toFixed(1);
+                  return `総資産: ${val}円  (初期比 ${sign}${Number(diff).toLocaleString()}円 / ${sign}${pct}%)`;
+                }
+                return `${ctx.dataset.label}: ${val}円`;
+              },
+            },
+          },
         },
         scales: {
-          x: { ticks:{ color:'#7a859a', font:{size:10}, maxTicksLimit:10 }, grid:{ color:'#1e2235' } },
+          x: {
+            ticks: { color: '#7a859a', font: { size: 10 }, maxTicksLimit: 12 },
+            grid: { color: '#1e2235' },
+          },
           y: {
-            ticks:{ color:'#7a859a', font:{size:10}, callback: v=>(v/10000).toFixed(0)+'万' },
-            grid:{ color:'#1e2235' },
+            ticks: {
+              color: '#7a859a',
+              font: { size: 10 },
+              callback: v => (v / 10000).toFixed(0) + '万',
+            },
+            grid: { color: '#1e2235' },
           },
         },
       },
     });
-  } catch(e) {}
+  } catch(e) { console.error(e); }
 }
 
 async function fetchScheduler() {
@@ -684,7 +838,7 @@ async function confirmReset() {
 async function refreshAll() {
   await Promise.all([
     fetchStatus(), fetchStats(), fetchPortfolio(),
-    fetchScreened(), fetchTrades(), fetchChart(), fetchScheduler(),
+    fetchScreened(), fetchTrades(), fetchClosedTrades(), fetchChart(), fetchScheduler(),
   ]);
 }
 
