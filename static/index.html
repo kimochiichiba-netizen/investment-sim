@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="ja" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Claude 投資シミュレーター</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    body { background: #0f172a; color: #e2e8f0; font-family: 'Segoe UI', sans-serif; }
+    .card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; }
+    .positive { color: #22c55e; }
+    .negative { color: #ef4444; }
+    .neutral  { color: #94a3b8; }
+    .btn-primary {
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      color: white; border: none; border-radius: 8px;
+      padding: 10px 20px; cursor: pointer; font-weight: 600;
+      transition: opacity 0.2s;
+    }
+    .btn-primary:hover { opacity: 0.85; }
+    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-danger {
+      background: #ef444420; color: #ef4444;
+      border: 1px solid #ef4444; border-radius: 8px;
+      padding: 10px 20px; cursor: pointer; font-weight: 600;
+    }
+    .btn-danger:hover { background: #ef444440; }
+    .tab-btn {
+      padding: 6px 14px; border-radius: 6px; font-size: 12px;
+      cursor: pointer; border: 1px solid #334155; color: #94a3b8;
+      background: transparent; transition: all 0.2s;
+    }
+    .tab-btn.active { background: #6366f1; color: white; border-color: #6366f1; }
+    .badge-buy  { background: #16a34a20; color: #22c55e; border: 1px solid #16a34a; }
+    .badge-sell { background: #dc262620; color: #ef4444; border: 1px solid #dc2626; }
+    .spinner {
+      width: 18px; height: 18px; border: 3px solid #ffffff40;
+      border-top-color: #fff; border-radius: 50%;
+      animation: spin 0.8s linear infinite; display: inline-block;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .pulse { animation: pulse 2s ease-in-out infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #1e293b; }
+    ::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+  </style>
+</head>
+<body class="min-h-screen p-4">
+
+<!-- ヘッダー -->
+<div class="flex items-center justify-between mb-6">
+  <div class="flex items-center gap-3">
+    <div class="text-3xl">🤖</div>
+    <div>
+      <h1 class="text-2xl font-bold text-white">Claude 投資シミュレーター</h1>
+      <p class="text-sm text-slate-400">日本株 自動売買実験 — 仮想資金 1,000,000円</p>
+    </div>
+  </div>
+  <div class="flex items-center gap-3">
+    <div id="scheduler-badge" class="text-xs text-slate-400 bg-slate-800 px-3 py-1.5 rounded-full">
+      ⏰ 読み込み中...
+    </div>
+    <div id="refresh-countdown" class="text-xs text-slate-500">自動更新: --秒</div>
+    <button id="run-btn" class="btn-primary" onclick="runTrade()">
+      ⚡ AI取引を今すぐ実行
+    </button>
+    <button class="btn-danger" onclick="resetData()">🔄 リセット</button>
+  </div>
+</div>
+
+<!-- サマリーカード -->
+<div class="grid grid-cols-4 gap-4 mb-6">
+  <div class="card p-5">
+    <div class="text-xs text-slate-400 mb-1">総資産</div>
+    <div id="total-assets" class="text-2xl font-bold text-white">--</div>
+    <div id="total-assets-bar" class="mt-2 h-1 bg-slate-700 rounded-full overflow-hidden">
+      <div id="total-assets-progress" class="h-1 bg-indigo-500 rounded-full" style="width:0%"></div>
+    </div>
+  </div>
+  <div class="card p-5">
+    <div class="text-xs text-slate-400 mb-1">現金残高</div>
+    <div id="cash" class="text-2xl font-bold text-white">--</div>
+    <div class="text-xs text-slate-500 mt-1" id="cash-ratio">--</div>
+  </div>
+  <div class="card p-5">
+    <div class="text-xs text-slate-400 mb-1">損益額</div>
+    <div id="pnl" class="text-2xl font-bold">--</div>
+    <div id="pnl-label" class="text-xs text-slate-400 mt-1">初期資金比</div>
+  </div>
+  <div class="card p-5">
+    <div class="text-xs text-slate-400 mb-1">損益率</div>
+    <div id="pnl-pct" class="text-2xl font-bold">--</div>
+    <div class="text-xs text-slate-500 mt-1">スタートから</div>
+  </div>
+</div>
+
+<!-- メインコンテンツ -->
+<div class="grid grid-cols-2 gap-4 mb-4">
+
+  <!-- ポートフォリオ -->
+  <div class="card p-5">
+    <div class="flex justify-between items-center mb-4">
+      <h2 class="font-bold text-white">📦 保有ポートフォリオ</h2>
+      <span id="stock-value" class="text-sm text-slate-400">株式評価額: --</span>
+    </div>
+    <div id="portfolio-table" class="overflow-auto max-h-64">
+      <div class="text-slate-500 text-sm text-center py-8">読み込み中...</div>
+    </div>
+  </div>
+
+  <!-- 株価チャート -->
+  <div class="card p-5">
+    <div class="flex justify-between items-center mb-3">
+      <h2 class="font-bold text-white">📈 株価チャート（30日）</h2>
+    </div>
+    <div id="ticker-tabs" class="flex flex-wrap gap-1.5 mb-3"></div>
+    <div class="relative h-52">
+      <canvas id="price-chart"></canvas>
+      <div id="chart-loading" class="absolute inset-0 flex items-center justify-center text-slate-500 text-sm">
+        銘柄を選択してください
+      </div>
+    </div>
+    <div id="chart-info" class="mt-2 text-xs text-slate-400 flex gap-4 hidden">
+      <span>現在値: <span id="info-price" class="text-white font-medium"></span></span>
+      <span>MA5: <span id="info-ma5" class="text-blue-400 font-medium"></span></span>
+      <span>MA25: <span id="info-ma25" class="text-yellow-400 font-medium"></span></span>
+      <span>RSI: <span id="info-rsi" class="font-medium"></span></span>
+    </div>
+  </div>
+</div>
+
+<!-- 資産推移チャート -->
+<div class="card p-5 mb-4">
+  <h2 class="font-bold text-white mb-4">💹 資産推移グラフ</h2>
+  <div class="h-40">
+    <canvas id="asset-chart"></canvas>
+  </div>
+</div>
+
+<!-- 取引履歴 -->
+<div class="card p-5">
+  <h2 class="font-bold text-white mb-4">📋 取引履歴</h2>
+  <div id="trades-table" class="overflow-auto max-h-72">
+    <div class="text-slate-500 text-sm text-center py-8">取引履歴なし</div>
+  </div>
+</div>
+
+<!-- Toast通知 -->
+<div id="toast" class="fixed bottom-6 right-6 px-5 py-3 rounded-xl text-sm font-medium shadow-2xl hidden z-50"></div>
+
+<script>
+// ==================== 状態管理 ====================
+let priceChart = null;
+let assetChart = null;
+let selectedTicker = null;
+let refreshTimer = 60;
+let countdown = null;
+
+// ==================== 数値フォーマット ====================
+const fmt = (n) => n == null ? '--' : Math.round(n).toLocaleString('ja-JP') + '円';
+const fmtPct = (n) => n == null ? '--' : (n >= 0 ? '+' : '') + n.toFixed(2) + '%';
+const fmtNum = (n) => n == null ? '--' : Math.round(n).toLocaleString('ja-JP');
+
+// ==================== Toast通知 ====================
+function showToast(msg, type = 'success') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = `fixed bottom-6 right-6 px-5 py-3 rounded-xl text-sm font-medium shadow-2xl z-50 ${
+    type === 'success' ? 'bg-green-600 text-white' :
+    type === 'error'   ? 'bg-red-600 text-white' :
+                         'bg-indigo-600 text-white'
+  }`;
+  t.classList.remove('hidden');
+  setTimeout(() => t.classList.add('hidden'), 4000);
+}
+
+// ==================== サマリー更新 ====================
+async function loadStatus() {
+  try {
+    const r = await fetch('/api/status');
+    const d = await r.json();
+
+    document.getElementById('total-assets').textContent = fmt(d.total_assets);
+    document.getElementById('cash').textContent = fmt(d.cash);
+
+    const cashRatio = d.total_assets > 0 ? (d.cash / d.total_assets * 100).toFixed(1) : 0;
+    document.getElementById('cash-ratio').textContent = `総資産の ${cashRatio}%`;
+
+    const pnlEl = document.getElementById('pnl');
+    pnlEl.textContent = fmt(d.pnl);
+    pnlEl.className = `text-2xl font-bold ${d.pnl >= 0 ? 'positive' : 'negative'}`;
+
+    const pnlPctEl = document.getElementById('pnl-pct');
+    pnlPctEl.textContent = fmtPct(d.pnl_pct);
+    pnlPctEl.className = `text-2xl font-bold ${d.pnl_pct >= 0 ? 'positive' : 'negative'}`;
+
+    // プログレスバー（初期資金比）
+    const ratio = Math.min((d.total_assets / d.initial_capital) * 100, 150);
+    document.getElementById('total-assets-progress').style.width = `${Math.min(ratio, 100)}%`;
+  } catch(e) { console.error(e); }
+}
+
+// ==================== ポートフォリオ更新 ====================
+async function loadPortfolio() {
+  try {
+    const r = await fetch('/api/portfolio');
+    const d = await r.json();
+
+    document.getElementById('stock-value').textContent = `株式評価額: ${fmt(d.total_stock_value)}`;
+
+    const el = document.getElementById('portfolio-table');
+    if (!d.holdings || d.holdings.length === 0) {
+      el.innerHTML = '<div class="text-slate-500 text-sm text-center py-8">現在保有株なし</div>';
+      return;
+    }
+
+    el.innerHTML = `
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="text-slate-400 text-xs border-b border-slate-700">
+            <th class="pb-2 text-left">銘柄</th>
+            <th class="pb-2 text-right">株数</th>
+            <th class="pb-2 text-right">現在値</th>
+            <th class="pb-2 text-right">評価額</th>
+            <th class="pb-2 text-right">含み損益</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${d.holdings.map(h => `
+            <tr class="border-b border-slate-800 hover:bg-slate-800/50">
+              <td class="py-2.5">
+                <div class="font-medium text-white">${h.company_name}</div>
+                <div class="text-xs text-slate-500">${h.ticker}</div>
+              </td>
+              <td class="py-2.5 text-right text-slate-300">${fmtNum(h.shares)}株</td>
+              <td class="py-2.5 text-right text-slate-300">${fmtNum(h.current_price)}円</td>
+              <td class="py-2.5 text-right text-white font-medium">${fmt(h.market_value)}</td>
+              <td class="py-2.5 text-right ${h.unrealized_pnl >= 0 ? 'positive' : 'negative'} font-medium">
+                ${h.unrealized_pnl >= 0 ? '+' : ''}${fmt(h.unrealized_pnl)}<br>
+                <span class="text-xs">(${fmtPct(h.unrealized_pnl_pct)})</span>
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+  } catch(e) { console.error(e); }
+}
+
+// ==================== 取引履歴更新 ====================
+async function loadTrades() {
+  try {
+    const r = await fetch('/api/trades?limit=30');
+    const d = await r.json();
+
+    const el = document.getElementById('trades-table');
+    if (!d.trades || d.trades.length === 0) {
+      el.innerHTML = '<div class="text-slate-500 text-sm text-center py-8">取引履歴なし</div>';
+      return;
+    }
+
+    el.innerHTML = `
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="text-slate-400 text-xs border-b border-slate-700">
+            <th class="pb-2 text-left">日時</th>
+            <th class="pb-2 text-left">銘柄</th>
+            <th class="pb-2 text-center">売買</th>
+            <th class="pb-2 text-right">株数</th>
+            <th class="pb-2 text-right">単価</th>
+            <th class="pb-2 text-right">金額</th>
+            <th class="pb-2 text-left">AIの判断理由</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${d.trades.map(t => `
+            <tr class="border-b border-slate-800 hover:bg-slate-800/50">
+              <td class="py-2 text-slate-500 text-xs whitespace-nowrap">
+                ${t.executed_at ? t.executed_at.slice(0,16).replace('T',' ') : '--'}
+              </td>
+              <td class="py-2">
+                <div class="text-white font-medium">${t.company_name}</div>
+                <div class="text-xs text-slate-500">${t.ticker}</div>
+              </td>
+              <td class="py-2 text-center">
+                <span class="badge-${t.action} text-xs px-2 py-0.5 rounded-full font-medium">
+                  ${t.action === 'buy' ? '買い' : '売り'}
+                </span>
+              </td>
+              <td class="py-2 text-right text-slate-300">${fmtNum(t.shares)}株</td>
+              <td class="py-2 text-right text-slate-300">${fmtNum(t.price)}円</td>
+              <td class="py-2 text-right text-white font-medium">${fmt(t.total_amount)}</td>
+              <td class="py-2 text-slate-400 text-xs max-w-xs truncate" title="${t.reason || ''}">${t.reason || '—'}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+  } catch(e) { console.error(e); }
+}
+
+// ==================== 株価チャート ====================
+async function loadPriceChart(ticker) {
+  selectedTicker = ticker;
+
+  // タブのスタイル更新
+  document.querySelectorAll('.tab-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.ticker === ticker);
+  });
+
+  document.getElementById('chart-loading').textContent = '📡 データ取得中...';
+  document.getElementById('chart-loading').classList.remove('hidden');
+
+  try {
+    const r = await fetch(`/api/chart/${ticker}`);
+    const d = await r.json();
+
+    const history = d.price_history || [];
+    const labels = history.map(h => h.date.slice(5));
+    const closes = history.map(h => h.close);
+    const ma5s   = history.map(h => h.ma5);
+    const ma25s  = history.map(h => h.ma25);
+
+    document.getElementById('chart-loading').classList.add('hidden');
+    document.getElementById('chart-info').classList.remove('hidden');
+
+    const latest = d;
+    document.getElementById('info-price').textContent = `${fmtNum(latest.current_price)}円`;
+    document.getElementById('info-ma5').textContent  = latest.ma5  ? `${fmtNum(latest.ma5)}円`  : '--';
+    document.getElementById('info-ma25').textContent = latest.ma25 ? `${fmtNum(latest.ma25)}円` : '--';
+    const rsiEl = document.getElementById('info-rsi');
+    rsiEl.textContent = latest.rsi14 ? `${latest.rsi14}` : '--';
+    rsiEl.className = `font-medium ${
+      latest.rsi14 >= 70 ? 'text-red-400' :
+      latest.rsi14 <= 30 ? 'text-green-400' : 'text-yellow-400'
+    }`;
+
+    if (priceChart) priceChart.destroy();
+
+    const ctx = document.getElementById('price-chart').getContext('2d');
+    priceChart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [
+          {
+            label: '終値',
+            data: closes,
+            borderColor: '#6366f1',
+            backgroundColor: 'rgba(99,102,241,0.08)',
+            fill: true,
+            pointRadius: 0,
+            borderWidth: 2,
+            tension: 0.3,
+          },
+          {
+            label: 'MA5',
+            data: ma5s,
+            borderColor: '#60a5fa',
+            pointRadius: 0,
+            borderWidth: 1.5,
+            borderDash: [],
+            tension: 0.3,
+          },
+          {
+            label: 'MA25',
+            data: ma25s,
+            borderColor: '#fbbf24',
+            pointRadius: 0,
+            borderWidth: 1.5,
+            tension: 0.3,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            labels: { color: '#94a3b8', font: { size: 11 }, usePointStyle: true, pointStyleWidth: 10 }
+          },
+          tooltip: {
+            mode: 'index',
+            intersect: false,
+            backgroundColor: '#1e293b',
+            borderColor: '#334155',
+            borderWidth: 1,
+            titleColor: '#e2e8f0',
+            bodyColor: '#94a3b8',
+            callbacks: {
+              label: ctx => `${ctx.dataset.label}: ${fmtNum(ctx.parsed.y)}円`
+            }
+          },
+        },
+        scales: {
+          x: { ticks: { color: '#64748b', maxTicksLimit: 8 }, grid: { color: '#1e293b' } },
+          y: {
+            ticks: {
+              color: '#64748b',
+              callback: v => fmtNum(v) + '円'
+            },
+            grid: { color: '#334155' }
+          },
+        },
+        interaction: { mode: 'index', intersect: false },
+      },
+    });
+  } catch(e) {
+    document.getElementById('chart-loading').textContent = '⚠️ データ取得に失敗しました';
+    console.error(e);
+  }
+}
+
+// ==================== 資産推移チャート ====================
+async function loadAssetChart() {
+  try {
+    const r = await fetch('/api/asset-history?days=30');
+    const d = await r.json();
+    const history = d.history || [];
+
+    const labels = history.map(h => h.date ? h.date.slice(5) : '');
+    const totals  = history.map(h => h.total_assets);
+    const cashes  = history.map(h => h.cash);
+    const stocks  = history.map(h => h.stock_value);
+
+    if (assetChart) assetChart.destroy();
+
+    const ctx = document.getElementById('asset-chart').getContext('2d');
+    assetChart = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [
+          {
+            label: '現金',
+            data: cashes,
+            backgroundColor: 'rgba(148,163,184,0.5)',
+            borderColor: 'transparent',
+          },
+          {
+            label: '株式',
+            data: stocks,
+            backgroundColor: 'rgba(99,102,241,0.6)',
+            borderColor: 'transparent',
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            labels: { color: '#94a3b8', font: { size: 11 }, usePointStyle: true }
+          },
+          tooltip: {
+            backgroundColor: '#1e293b',
+            borderColor: '#334155',
+            borderWidth: 1,
+            titleColor: '#e2e8f0',
+            bodyColor: '#94a3b8',
+            callbacks: { label: ctx => `${ctx.dataset.label}: ${fmt(ctx.parsed.y)}` }
+          },
+        },
+        scales: {
+          x: { stacked: true, ticks: { color: '#64748b', maxTicksLimit: 8 }, grid: { display: false } },
+          y: { stacked: true, ticks: { color: '#64748b', callback: v => fmt(v) }, grid: { color: '#334155' } },
+        },
+      },
+    });
+  } catch(e) { console.error(e); }
+}
+
+// ==================== 銘柄タブを生成 ====================
+async function loadWatchlistTabs() {
+  try {
+    const r = await fetch('/api/watchlist');
+    const d = await r.json();
+    const container = document.getElementById('ticker-tabs');
+    container.innerHTML = '';
+    d.watchlist.forEach((w, i) => {
+      const btn = document.createElement('button');
+      btn.className = 'tab-btn';
+      btn.dataset.ticker = w.ticker;
+      btn.textContent = w.company_name.slice(0, 6);
+      btn.title = `${w.company_name} (${w.ticker})`;
+      btn.onclick = () => loadPriceChart(w.ticker);
+      container.appendChild(btn);
+      if (i === 0 && !selectedTicker) loadPriceChart(w.ticker);
+    });
+  } catch(e) { console.error(e); }
+}
+
+// ==================== スケジューラー状態 ====================
+async function loadSchedulerStatus() {
+  try {
+    const r = await fetch('/api/scheduler/status');
+    const d = await r.json();
+    const el = document.getElementById('scheduler-badge');
+    if (d.next_run_time) {
+      const next = new Date(d.next_run_time);
+      const hhmm = next.toLocaleTimeString('ja-JP', { hour:'2-digit', minute:'2-digit' });
+      el.textContent = `⏰ 次回自動取引: ${hhmm}`;
+    } else {
+      el.textContent = '⏸ 次回取引なし（営業時間外）';
+    }
+  } catch(e) {}
+}
+
+// ==================== AI取引実行 ====================
+async function runTrade() {
+  const btn = document.getElementById('run-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> AI分析中...';
+
+  try {
+    const r = await fetch('/api/trade/run', { method: 'POST' });
+    const d = await r.json();
+    if (d.status === 'success') {
+      const exec = d.executed_trades?.length || 0;
+      showToast(`✅ AI取引完了！${exec}件の取引を実行しました`, 'success');
+      await loadAll();
+    } else {
+      showToast(`⚠️ ${d.message || 'エラーが発生しました'}`, 'error');
+    }
+  } catch(e) {
+    showToast('❌ サーバーエラーが発生しました', 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '⚡ AI取引を今すぐ実行';
+  }
+}
+
+// ==================== リセット ====================
+async function resetData() {
+  if (!confirm('全データをリセットして初期資金100万円からやり直しますか？')) return;
+  try {
+    const r = await fetch('/api/reset', { method: 'POST' });
+    const d = await r.json();
+    showToast('🔄 リセット完了！初期資金100万円からスタートします', 'info');
+    await loadAll();
+  } catch(e) {
+    showToast('❌ リセットに失敗しました', 'error');
+  }
+}
+
+// ==================== 全データ更新 ====================
+async function loadAll() {
+  await Promise.all([
+    loadStatus(),
+    loadPortfolio(),
+    loadTrades(),
+    loadAssetChart(),
+    loadSchedulerStatus(),
+  ]);
+  if (selectedTicker) loadPriceChart(selectedTicker);
+}
+
+// ==================== 自動更新カウントダウン ====================
+function startCountdown() {
+  refreshTimer = 60;
+  if (countdown) clearInterval(countdown);
+  countdown = setInterval(async () => {
+    refreshTimer--;
+    document.getElementById('refresh-countdown').textContent = `自動更新: ${refreshTimer}秒`;
+    if (refreshTimer <= 0) {
+      await loadAll();
+      refreshTimer = 60;
+    }
+  }, 1000);
+}
+
+// ==================== 初期化 ====================
+(async () => {
+  await loadWatchlistTabs();
+  await loadAll();
+  startCountdown();
+})();
+</script>
+</body>
+</html>
