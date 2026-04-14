@@ -59,16 +59,16 @@ def scheduled_sell_check():
 
 
 def scheduled_screening_and_buy():
-    """【毎朝7時実行】スクリーニング実行 → 買い付け"""
+    """【10分ごと実行】スクリーニング実行 → 買い付け（平日のみ）"""
     now = datetime.now(JST)
     if now.weekday() >= 5:
         return  # 土日はスキップ
-    print(f"\n⏰ 朝のスクリーニング・買い付けを開始します ({now.strftime('%Y-%m-%d %H:%M')})")
+    print(f"\n⏰ スクリーニング・買い付けを開始します ({now.strftime('%Y-%m-%d %H:%M')})")
     run_screening(verbose=False)
     run_buy_execution()
 
 
-# 1分ごと: 売りシグナルチェック
+# 1分ごと: 売りシグナルチェック（市場時間内のみ）
 scheduler.add_job(
     scheduled_sell_check,
     IntervalTrigger(minutes=1, timezone=JST),
@@ -77,12 +77,12 @@ scheduler.add_job(
     replace_existing=True,
 )
 
-# 毎朝7:00: スクリーニング + 買い付け
+# 10分ごと: スクリーニング + 買い付け（平日のみ）
 scheduler.add_job(
     scheduled_screening_and_buy,
-    CronTrigger(hour=7, minute=0, timezone=JST),
+    IntervalTrigger(minutes=10, timezone=JST),
     id="morning_screening",
-    name="朝のスクリーニング・買い付け（毎朝7時）",
+    name="スクリーニング・買い付け（10分ごと）",
     replace_existing=True,
 )
 
