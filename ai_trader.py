@@ -128,17 +128,17 @@ def _judge_all_stocks(account: Dict, portfolio: List[Dict],
             sell_score += trend_points
             sell_reasons.append(f"下降トレンド(MA差{ma_diff_pct:.1f}%)")
 
-        # RSI判断
-        if rsi < 30:
-            buy_score += 35
+        # RSI判断（範囲を広めに設定して反応しやすくする）
+        if rsi < 40:
+            buy_score += 25
             buy_reasons.append(f"RSI売られすぎ({rsi:.1f})")
-        elif rsi < 45:
-            buy_score += 20
+        elif rsi < 55:
+            buy_score += 15
             buy_reasons.append(f"RSI低め({rsi:.1f})")
-        elif rsi > 70:
-            sell_score += 35
+        elif rsi > 65:
+            sell_score += 25
             sell_reasons.append(f"RSI買われすぎ({rsi:.1f})")
-        elif rsi > 60:
+        elif rsi > 55:
             sell_score += 15
             sell_reasons.append(f"RSIやや高め({rsi:.1f})")
 
@@ -155,11 +155,11 @@ def _judge_all_stocks(account: Dict, portfolio: List[Dict],
             buy_score += 10
 
         # ── 判断 ──
-        if buy_score >= 55 and buy_score > sell_score:
+        if buy_score >= 40 and buy_score > sell_score:
             reason = "、".join(buy_reasons[:2]) or "総合判断で買い"
             decisions.append({"ticker": ticker, "action": "buy", "reason": reason})
 
-        elif sell_score >= 45 and sell_score > buy_score and holding:
+        elif sell_score >= 35 and sell_score > buy_score and holding:
             reason = "、".join(sell_reasons[:2]) or "総合判断で売り"
             decisions.append({"ticker": ticker, "action": "sell", "reason": reason})
 
