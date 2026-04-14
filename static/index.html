@@ -519,7 +519,13 @@ async function runTrade() {
     const d = await r.json();
     if (d.status === 'success') {
       const exec = d.executed_trades?.length || 0;
-      showToast(`✅ AI取引完了！${exec}件の取引を実行しました`, 'success');
+      const skip = d.skipped_trades?.length || 0;
+      const msg = exec > 0
+        ? `✅ AI取引完了！${exec}件実行` + (skip > 0 ? ` / ${skip}件スキップ` : '')
+        : skip > 0
+          ? `⚠️ 取引なし（${skip}件スキップ：現金不足 or 上限超え）`
+          : `ℹ️ 現在は様子見（売買シグナルなし）`;
+      showToast(msg, exec > 0 ? 'success' : 'info');
       await loadAll();
     } else {
       showToast(`⚠️ ${d.message || 'エラーが発生しました'}`, 'error');

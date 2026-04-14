@@ -49,7 +49,7 @@ from stock_data import get_all_watchlist_summaries, WATCHLIST
 # リスク管理パラメータ
 MAX_SINGLE_TRADE_RATIO = 0.05   # 1回の取引は総資産の5%まで
 MAX_SINGLE_STOCK_RATIO = 0.20   # 1銘柄は総資産の20%まで
-MIN_CASH_RATIO         = 0.30   # 現金は総資産の30%以上を維持
+MIN_CASH_RATIO         = 0.15   # 現金は総資産の15%以上を維持
 COMMISSION_RATE        = 0.001  # 手数料 0.1%
 MIN_COMMISSION         = 100    # 最低手数料 100円
 
@@ -154,8 +154,12 @@ def _judge_all_stocks(account: Dict, portfolio: List[Dict],
         if cash_ratio >= 0.35:
             buy_score += 10
 
+        # 現金で1株以上買えるか確認
+        free_cash = account["cash"] - total_assets * MIN_CASH_RATIO
+        can_afford = free_cash >= price
+
         # ── 判断 ──
-        if buy_score >= 40 and buy_score > sell_score:
+        if buy_score >= 40 and buy_score > sell_score and can_afford:
             reason = "、".join(buy_reasons[:2]) or "総合判断で買い"
             decisions.append({"ticker": ticker, "action": "buy", "reason": reason})
 
