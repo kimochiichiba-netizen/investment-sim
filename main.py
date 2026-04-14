@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 
 from database import (
     init_db,
@@ -43,28 +44,28 @@ init_db()
 scheduler = BackgroundScheduler(timezone=JST)
 
 def scheduled_trade():
-    """スケジュール実行される取引関数"""
+    """スケジュール実行される取引関数（1分おき）"""
     now = datetime.now(JST)
-    # 東証の営業時間（平日 9:30〜15:00）のみ実行
+    # 東証の営業時間（平日 9:00〜15:30）のみ実行
     if now.weekday() >= 5:  # 土日はスキップ
         print(f"⏭️  土日のためスキップ ({now.strftime('%Y-%m-%d %H:%M')})")
         return
-    if not (9 <= now.hour < 15):
+    if not (9 <= now.hour < 15 or (now.hour == 15 and now.minute <= 30)):
         print(f"⏭️  東証営業時間外のためスキップ ({now.strftime('%H:%M')})")
         return
     print(f"⏰ 定期取引を開始します ({now.strftime('%Y-%m-%d %H:%M')})")
     run_ai_trading()
 
-# 毎時00分に実行
+# 1分ごとに実行
 scheduler.add_job(
     scheduled_trade,
-    CronTrigger(minute=0, timezone=JST),
+    IntervalTrigger(minutes=1, timezone=JST),
     id="auto_trade",
-    name="自動取引",
+    name="AI自動取引（1分ごと）",
     replace_existing=True,
 )
 scheduler.start()
-print("✅ 自動取引スケジューラーを開始しました（平日 毎時00分）")
+print("✅ AI自動取引スケジューラーを開始しました（平日 東証営業時間中・1分ごと）")
 
 
 # ==================== APIエンドポイント ====================
