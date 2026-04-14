@@ -7,8 +7,8 @@ cd "$(dirname "$0")"
 echo "🚀 Claude投資シミュレーターを起動中..."
 echo "📌 ブラウザが自動で開きます"
 
-# 既に起動中のサーバーを停止する
-pkill -f "uvicorn main:app" 2>/dev/null
+# 既に起動中のサーバーを停止する（ポート8000を使っているプロセスを強制終了）
+lsof -ti :8000 | xargs kill -9 2>/dev/null
 sleep 1
 
 # サーバーをバックグラウンドで起動
@@ -18,7 +18,7 @@ SERVER_PID=$!
 # サーバーが起動するまで待つ（最大10秒）
 for i in {1..10}; do
   sleep 1
-  if curl -s http://localhost:8000/health > /dev/null 2>&1; then
+  if curl -s http://localhost:8000/api/status > /dev/null 2>&1; then
     echo "✅ サーバー起動完了！"
     break
   fi
