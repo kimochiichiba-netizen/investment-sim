@@ -278,6 +278,23 @@ def delete_holding(ticker: str):
     conn.close()
 
 
+def recently_sold(ticker: str, days: int = 7) -> bool:
+    """
+    指定銘柄を直近 days 日以内に売却していれば True を返す。
+    クールダウン期間のチェックに使い、「売ってすぐ再購入→手数料二重払い」を防ぐ。
+    """
+    conn = get_conn()
+    row = conn.execute("""
+        SELECT id FROM trades
+        WHERE ticker = ?
+          AND action = 'sell'
+          AND executed_at >= datetime('now', ?)
+        LIMIT 1
+    """, (ticker, f'-{days} days')).fetchone()
+    conn.close()
+    return row is not None
+
+
 # ==================== 取引履歴 ====================
 
 def save_trade(

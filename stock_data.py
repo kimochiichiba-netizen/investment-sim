@@ -48,7 +48,7 @@ def get_prices_bulk(tickers: List[str]) -> Dict[str, Optional[float]]:
                     col = t if len(tickers) > 1 else close.name if hasattr(close, 'name') else "Close"
                     series = close[col] if len(tickers) > 1 else close
                     prices = series.dropna()
-                    out[t] = float(prices.iloc[-1]) if not prices.empty else None
+                    out[t] = float(prices.iloc[-1].item()) if not prices.empty else None
                 except Exception:
                     out[t] = None
         except Exception:

@@ -44,6 +44,7 @@ from database import (
     update_trailing_stop,
     mark_partial_taken,
     get_trade_stats,
+    recently_sold,
 )
 from fundamental_data import get_fundamental, get_current_price
 from stock_universe import SMALL_CAP_UNIVERSE
@@ -275,6 +276,12 @@ def run_buy_execution() -> Dict:
             continue
         if len(held_tickers) >= MAX_HOLDINGS:
             break
+
+        # ── クールダウンチェック（7日以内に売った銘柄は再購入しない）──
+        # 売ってすぐ買い直すと手数料が二重にかかるため
+        if recently_sold(ticker, days=7):
+            print(f"  ⏸ {ticker} 直近7日以内に売却済み → クールダウン中のためスキップ")
+            continue
 
         current_price = prices.get(ticker)
         if not current_price or current_price <= 0:
