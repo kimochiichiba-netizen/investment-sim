@@ -35,25 +35,50 @@ def get_current_price(ticker: str) -> Optional[float]:
 
 
 def get_prices_bulk(tickers: List[str]) -> Dict[str, Optional[float]]:
-    """複数銘柄の現在株価を一括取得（高速）"""
+    """複数銘柄の最新株価を一括取得（1分足優先・日足フォールバック）"""
     result = {}
+
+    def _extract(data, tickers):
+        """DataFrameから各銘柄の最新値を取り出す"""
+        out = {}
+        try:
+            close = data["Close"]
+            for t in tickers:
+                try:
+                    col = t if len(tickers) > 1 else close.name if hasattr(close, 'name') else "Close"
+                    series = close[col] if len(tickers) > 1 else close
+                    prices = series.dropna()
+                    out[t] = float(prices.iloc[-1]) if not prices.empty else None
+                except Exception:
+                    out[t] = None
+        except Exception:
+            out = {t: None for t in tickers}
+        return out
+
+    # まず1分足データで最新価格を取得（市場が動いているときはリアルタイムに近い）
+    try:
+        data = yf.download(tickers, period="1d", interval="1m", progress=False, auto_adjust=True)
+        if not data.empty:
+            result = _extract(data, tickers)
+            # 取得できなかった銘柄だけ日足で補完
+            missing = [t for t in tickers if not result.get(t)]
+            if missing:
+                data2 = yf.download(missing, period="2d", progress=False, auto_adjust=True)
+                if not data2.empty:
+                    result.update(_extract(data2, missing))
+            return result
+    except Exception:
+        pass
+
+    # フォールバック: 日足データ
     try:
         data = yf.download(tickers, period="2d", progress=False, auto_adjust=True)
-        if data.empty:
-            return {t: None for t in tickers}
-
-        close = data["Close"] if len(tickers) > 1 else data[["Close"]]
-        for ticker in tickers:
-            try:
-                col = ticker if len(tickers) > 1 else "Close"
-                prices = close[col].dropna()
-                result[ticker] = float(prices.iloc[-1]) if not prices.empty else None
-            except Exception:
-                result[ticker] = None
+        if not data.empty:
+            return _extract(data, tickers)
     except Exception as e:
         print(f"⚠️  一括価格取得エラー: {e}")
-        result = {t: None for t in tickers}
-    return result
+
+    return {t: None for t in tickers}
 
 
 def get_history(ticker: str, days: int = 60) -> Optional[pd.DataFrame]:
@@ -151,4 +176,18 @@ def get_all_watchlist_summaries() -> List[Dict]:
             summaries.append(summary)
         else:
             print(f"⚠️  {ticker} のデータ取得をスキップしました")
+
+    if not summaries:
+        return summaries
+
+    # 現在値を1分足データで一括更新（終値より正確な最新価格）
+    tickers = [s["ticker"] for s in summaries]
+    latest_prices = get_prices_bulk(tickers)
+    for s in summaries:
+        p = latest_prices.get(s["ticker"])
+        if p:
+            prev = s["prev_close"]
+            s["current_price"] = round(p, 1)
+            s["change_pct"] = round((p / prev - 1) * 100, 2) if prev else s["change_pct"]
+
     return summaries
