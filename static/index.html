@@ -413,12 +413,14 @@ async function fetchStatus() {
     document.getElementById('cash').textContent = fmt(d.cash);
     document.getElementById('cash-ratio').textContent = `現金比率: ${cashRatio.toFixed(1)}%`;
 
+    const pnlSign = pnl > 0 ? '+' : '';
+    const pnlColor = pnl > 0 ? 'text-green' : pnl < 0 ? 'text-red' : 'text-muted';
     const pEl = document.getElementById('pnl');
-    pEl.textContent = (pnl >= 0 ? '+' : '') + Number(pnl).toLocaleString('ja-JP') + '円';
-    pEl.className = 'card-value ' + (pnl >= 0 ? 'text-green' : 'text-red');
+    pEl.textContent = pnlSign + Number(pnl).toLocaleString('ja-JP') + '円';
+    pEl.className = 'card-value ' + pnlColor;
     const pEl2 = document.getElementById('pnl-pct');
-    pEl2.textContent = `${pnl >= 0 ? '+' : ''}${(d.pnl_pct||0).toFixed(2)}%`;
-    pEl2.className = 'card-sub ' + (pnl >= 0 ? 'text-green' : 'text-red');
+    pEl2.textContent = `${pnlSign}${(d.pnl_pct||0).toFixed(2)}%`;
+    pEl2.className = 'card-sub ' + pnlColor;
 
     document.getElementById('status-time').textContent = '更新: ' + new Date().toLocaleTimeString('ja-JP');
   } catch(e) {}
@@ -450,24 +452,37 @@ async function fetchPortfolio() {
     }
 
     tbody.innerHTML = holdings.map(h => {
-      const pnl    = h.unrealized_pnl || 0;
-      const pct    = h.unrealized_pnl_pct || 0;
-      const color  = pnl >= 0 ? 'text-green' : 'text-red';
-      const sign   = pnl >= 0 ? '+' : '';
+      // 含み損益・損益率（null/undefined も 0 として扱う）
+      const pnl = (h.unrealized_pnl != null) ? h.unrealized_pnl : 0;
+      const pct = (h.unrealized_pnl_pct != null) ? h.unrealized_pnl_pct : 0;
 
-      // 達成度バー（0%〜100%で2倍目標）
-      const progress = h.target_price > 0
-        ? Math.min(100, Math.max(0, ((h.current_price - h.avg_cost) / (h.target_price - h.avg_cost)) * 100))
+      // 色: 損益がゼロの場合は白（グレー）、プラスは緑、マイナスは赤
+      const color = pnl > 0 ? 'text-green' : pnl < 0 ? 'text-red' : 'text-muted';
+      // 符号: プラスは「+」、マイナスは数値自体に「-」が付くので空文字
+      const sign  = pnl > 0 ? '+' : '';
+
+      // 損益の表示文字列
+      const pnlStr = `${sign}${Number(pnl).toLocaleString('ja-JP')}円`;
+      const pctStr = `${sign}${pct.toFixed(2)}%`;
+
+      // 達成度バー（取得価格 → 2倍が 0% → 100%）
+      const progress = (h.target_price > 0 && h.avg_cost > 0)
+        ? Math.min(100, Math.max(0,
+            (h.current_price - h.avg_cost) / (h.target_price - h.avg_cost) * 100
+          ))
         : 0;
       const barColor = pct >= 100 ? '#fbbf24' : pct >= 50 ? '#22c55e' : pct >= 0 ? '#5b9cf6' : '#ef4444';
 
-      // ストップ価格の表示（現在価格との距離%）
-      const stopPct = h.trailing_stop > 0
-        ? ((h.trailing_stop / h.current_price - 1) * 100).toFixed(1)
-        : null;
-      const stopStr = h.trailing_stop > 0
-        ? `<span class="stop-price">${Number(h.trailing_stop).toLocaleString()}円<br><span style="font-size:10px">(${stopPct}%)</span></span>`
-        : '<span class="text-muted">—</span>';
+      // ストップ価格（現在価格との差を%で表示）
+      const stop = h.trailing_stop;
+      let stopStr;
+      if (stop && stop > 0) {
+        const stopDiff = ((stop / h.current_price - 1) * 100).toFixed(1);
+        stopStr = `<span class="stop-price">${Number(stop).toLocaleString()}円</span>`
+                + `<div style="font-size:10px;color:var(--muted)">${stopDiff}%</div>`;
+      } else {
+        stopStr = '<span class="text-muted">—</span>';
+      }
 
       return `<tr>
         <td><strong>${esc(h.company_name)}</strong></td>
@@ -476,10 +491,10 @@ async function fetchPortfolio() {
         <td>${Number(h.avg_cost).toLocaleString()}円</td>
         <td><strong>${Number(h.current_price).toLocaleString()}円</strong></td>
         <td>${Number(h.market_value).toLocaleString()}円</td>
-        <td class="${color}">${sign}${Number(h.unrealized_pnl).toLocaleString()}円</td>
-        <td class="${color}" style="font-weight:700;font-size:14px">${sign}${pct.toFixed(2)}%</td>
+        <td class="${color}" style="font-weight:600">${pnlStr}</td>
+        <td class="${color}" style="font-weight:700;font-size:14px">${pctStr}</td>
         <td>${stopStr}</td>
-        <td style="color:var(--gold);font-weight:700">${h.buy_net_cash_ratio != null ? h.buy_net_cash_ratio.toFixed(2) : '—'}</td>
+        <td style="color:var(--gold);font-weight:700">${h.buy_net_cash_ratio != null ? Number(h.buy_net_cash_ratio).toFixed(2) : '—'}</td>
         <td>${h.target_price != null ? Number(h.target_price).toLocaleString() + '円' : '—'}</td>
         <td style="min-width:70px">
           <div style="font-size:10px;color:var(--muted);margin-bottom:2px">${progress.toFixed(0)}%</div>

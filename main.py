@@ -9,7 +9,6 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from database import (
@@ -139,6 +138,9 @@ async def get_portfolio_api():
             "buy_net_cash_ratio": h.get("buy_net_cash_ratio"),
             "target_price":       h.get("target_price"),
             "catalyst_notes":     h.get("catalyst_notes"),
+            # トレーリングストップ（プロ仕様リスク管理）
+            "peak_price":         round(h["peak_price"], 1) if h.get("peak_price") else round(current_price, 1),
+            "trailing_stop":      round(h["trailing_stop"], 1) if h.get("trailing_stop") else round(current_price * 0.85, 1),
         })
 
     return {
