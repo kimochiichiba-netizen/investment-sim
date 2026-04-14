@@ -19,6 +19,7 @@ from database import (
     get_trades,
     get_asset_history,
     get_screened_stocks,
+    get_trade_stats,
     reset_all,
 )
 from fundamental_data import get_fundamental, get_current_price
@@ -48,41 +49,25 @@ init_db()
 scheduler = BackgroundScheduler(timezone=JST)
 
 
-def scheduled_sell_check():
-    """【毎分実行】保有銘柄の売りシグナルチェック（2倍達成・損切り）"""
+def scheduled_trading():
+    """
+    【1分ごと実行】売買フルサイクル
+    ① 保有銘柄の売りチェック（トレーリングストップ / 2倍達成 / 中間利確）
+    ② スクリーニング通過銘柄の買い付けチェック
+    ※ 平日のみ実行（土日はスキップ）
+    """
     now = datetime.now(JST)
     if now.weekday() >= 5:
         return  # 土日はスキップ
-    if not (9 <= now.hour < 15 or (now.hour == 15 and now.minute <= 30)):
-        return  # 東証営業時間外はスキップ
-    run_sell_check()
+    run_fundamental_trading()
 
 
-def scheduled_screening_and_buy():
-    """【10分ごと実行】スクリーニング実行 → 買い付け（平日のみ）"""
-    now = datetime.now(JST)
-    if now.weekday() >= 5:
-        return  # 土日はスキップ
-    print(f"\n⏰ スクリーニング・買い付けを開始します ({now.strftime('%Y-%m-%d %H:%M')})")
-    run_screening(verbose=False)
-    run_buy_execution()
-
-
-# 1分ごと: 売りシグナルチェック（市場時間内のみ）
+# ── 1分ごと: 売買フルサイクル ──────────────────────────────
 scheduler.add_job(
-    scheduled_sell_check,
+    scheduled_trading,
     IntervalTrigger(minutes=1, timezone=JST),
-    id="sell_check",
-    name="売りシグナルチェック（1分ごと）",
-    replace_existing=True,
-)
-
-# 10分ごと: スクリーニング + 買い付け（平日のみ）
-scheduler.add_job(
-    scheduled_screening_and_buy,
-    IntervalTrigger(minutes=10, timezone=JST),
-    id="morning_screening",
-    name="スクリーニング・買い付け（10分ごと）",
+    id="auto_trading",
+    name="売買フルサイクル（1分ごと）",
     replace_existing=True,
 )
 
@@ -177,13 +162,19 @@ async def get_asset_history_api(days: int = 30):
 @app.get("/api/scheduler/status")
 async def get_scheduler_status():
     """スケジューラーの状態を返す"""
-    sell_job     = scheduler.get_job("sell_check")
-    morning_job  = scheduler.get_job("morning_screening")
+    job = scheduler.get_job("auto_trading")
+    next_run = job.next_run_time.astimezone(JST).isoformat() if job and job.next_run_time else None
     return {
-        "running": scheduler.running,
-        "sell_check_next":    sell_job.next_run_time.astimezone(JST).isoformat() if sell_job and sell_job.next_run_time else None,
-        "morning_run_next":   morning_job.next_run_time.astimezone(JST).isoformat() if morning_job and morning_job.next_run_time else None,
+        "running":          scheduler.running,
+        "sell_check_next":  next_run,
+        "morning_run_next": next_run,
     }
+
+
+@app.get("/api/stats")
+async def get_stats():
+    """取引統計（勝率・累計損益）を返す"""
+    return get_trade_stats()
 
 
 # ── 清原式専用エンドポイント ──────────────────────────────

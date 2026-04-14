@@ -3,316 +3,244 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>清原式 割安小型株シミュレーター</title>
+  <title>清原式 割安小型株シミュレーター Pro</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <style>
     :root {
-      --bg: #0f1117;
-      --surface: #1a1d27;
-      --surface2: #22263a;
-      --border: #2e3349;
-      --accent: #4f8ef7;
+      --bg: #0a0d14;
+      --surface: #141720;
+      --surface2: #1e2235;
+      --border: #2a3050;
+      --accent: #5b9cf6;
       --green: #22c55e;
       --red: #ef4444;
       --yellow: #f59e0b;
       --text: #e2e8f0;
-      --muted: #8892a4;
+      --muted: #7a859a;
       --gold: #fbbf24;
+      --purple: #a78bfa;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      background: var(--bg);
-      color: var(--text);
-      font-family: 'Hiragino Sans', 'Noto Sans JP', sans-serif;
-      font-size: 14px;
-      min-height: 100vh;
-    }
+    body { background: var(--bg); color: var(--text); font-family: 'Hiragino Sans', 'Noto Sans JP', sans-serif; font-size: 14px; }
 
     /* ── ヘッダー ── */
     .header {
-      background: var(--surface);
+      background: linear-gradient(135deg, #141720 0%, #1a1f35 100%);
       border-bottom: 1px solid var(--border);
-      padding: 14px 24px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      position: sticky;
-      top: 0;
-      z-index: 100;
+      padding: 13px 24px;
+      display: flex; align-items: center; justify-content: space-between;
+      position: sticky; top: 0; z-index: 100;
+      box-shadow: 0 2px 20px rgba(0,0,0,0.4);
     }
-    .header-title { display: flex; align-items: center; gap: 10px; }
-    .header-title h1 { font-size: 18px; font-weight: 700; }
-    .header-title .badge {
-      background: var(--accent);
-      color: #fff;
-      font-size: 10px;
-      padding: 2px 8px;
-      border-radius: 10px;
-      font-weight: 600;
+    .header-title { display: flex; align-items: center; gap: 12px; }
+    .header-title h1 { font-size: 17px; font-weight: 700; letter-spacing: -0.3px; }
+    .badge-pro {
+      background: linear-gradient(135deg, #5b9cf6, #a78bfa);
+      color: #fff; font-size: 10px; padding: 3px 9px;
+      border-radius: 12px; font-weight: 700; letter-spacing: 0.5px;
     }
-    .header-actions { display: flex; gap: 10px; align-items: center; }
+    .header-actions { display: flex; gap: 8px; align-items: center; }
 
     /* ── ボタン ── */
     .btn {
-      padding: 8px 16px;
-      border: none;
-      border-radius: 8px;
-      cursor: pointer;
-      font-size: 13px;
-      font-weight: 600;
-      transition: opacity 0.2s, transform 0.1s;
+      padding: 8px 14px; border: none; border-radius: 8px; cursor: pointer;
+      font-size: 12px; font-weight: 700; transition: all 0.15s;
     }
-    .btn:hover { opacity: 0.85; transform: translateY(-1px); }
+    .btn:hover { filter: brightness(1.1); transform: translateY(-1px); }
     .btn:active { transform: translateY(0); }
     .btn-primary   { background: var(--accent); color: #fff; }
     .btn-success   { background: var(--green); color: #fff; }
     .btn-danger    { background: var(--red); color: #fff; }
     .btn-secondary { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
-    .btn:disabled  { opacity: 0.5; cursor: not-allowed; }
+    .btn:disabled  { opacity: 0.45; cursor: not-allowed; transform: none; }
 
-    /* ── メインレイアウト ── */
-    .main { padding: 20px 24px; max-width: 1400px; margin: 0 auto; }
-    .section { margin-bottom: 28px; }
+    /* ── レイアウト ── */
+    .main { padding: 18px 22px; max-width: 1480px; margin: 0 auto; }
+    .section { margin-bottom: 22px; }
     .section-title {
-      font-size: 15px;
-      font-weight: 700;
-      margin-bottom: 12px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      color: var(--text);
-      flex-wrap: wrap;
+      font-size: 14px; font-weight: 700; margin-bottom: 10px;
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
     }
-    .section-title .count {
-      background: var(--surface2);
-      padding: 2px 8px;
-      border-radius: 10px;
-      font-size: 12px;
-      color: var(--muted);
+    .count-badge {
+      background: var(--surface2); padding: 2px 8px; border-radius: 10px;
+      font-size: 11px; color: var(--muted); font-weight: 600;
     }
+    .hint-text { font-size: 11px; color: var(--muted); font-weight: 400; }
 
     /* ── サマリーカード ── */
-    .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+    .cards { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; }
     .card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 18px 20px;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 12px; padding: 16px 18px;
+      position: relative; overflow: hidden;
     }
-    .card-label { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
-    .card-value { font-size: 26px; font-weight: 700; line-height: 1.2; }
-    .card-sub   { font-size: 12px; color: var(--muted); margin-top: 4px; }
-    .text-green { color: var(--green); }
-    .text-red   { color: var(--red); }
-    .text-gold  { color: var(--gold); }
-    .text-blue  { color: var(--accent); }
+    .card::before {
+      content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+      background: var(--card-accent, var(--border));
+    }
+    .card.accent-blue::before  { background: var(--accent); }
+    .card.accent-green::before { background: var(--green); }
+    .card.accent-red::before   { background: var(--red); }
+    .card.accent-gold::before  { background: var(--gold); }
+    .card.accent-purple::before { background: var(--purple); }
+    .card-label { font-size: 11px; color: var(--muted); margin-bottom: 5px; }
+    .card-value { font-size: 22px; font-weight: 700; line-height: 1.2; }
+    .card-sub   { font-size: 11px; color: var(--muted); margin-top: 4px; }
+
+    /* 色クラス */
+    .text-green  { color: var(--green); }
+    .text-red    { color: var(--red); }
+    .text-gold   { color: var(--gold); }
+    .text-blue   { color: var(--accent); }
+    .text-purple { color: var(--purple); }
+    .text-muted  { color: var(--muted); }
 
     /* ── テーブル ── */
     .table-wrap {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      overflow: hidden;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 12px; overflow: hidden;
     }
-    .table-wrap table {
-      width: 100%;
-      border-collapse: collapse;
-    }
+    .table-wrap table { width: 100%; border-collapse: collapse; }
     .table-wrap th {
-      background: var(--surface2);
-      padding: 10px 14px;
-      text-align: left;
-      font-size: 12px;
-      color: var(--muted);
-      font-weight: 600;
-      white-space: nowrap;
-      border-bottom: 1px solid var(--border);
+      background: var(--surface2); padding: 9px 12px; text-align: left;
+      font-size: 11px; color: var(--muted); font-weight: 700;
+      white-space: nowrap; border-bottom: 1px solid var(--border);
     }
     .table-wrap td {
-      padding: 10px 14px;
-      border-bottom: 1px solid var(--border);
-      font-size: 13px;
-      vertical-align: middle;
+      padding: 9px 12px; border-bottom: 1px solid rgba(42,48,80,0.6);
+      font-size: 12px; vertical-align: middle;
     }
     .table-wrap tr:last-child td { border-bottom: none; }
-    .table-wrap tr:hover td { background: rgba(255,255,255,0.02); }
+    .table-wrap tr:hover td { background: rgba(255,255,255,0.025); }
 
-    /* ── バッジ ── */
-    .badge-pass {
-      display: inline-block;
-      background: rgba(34,197,94,0.15);
-      color: var(--green);
-      border: 1px solid rgba(34,197,94,0.3);
-      padding: 2px 8px;
-      border-radius: 6px;
-      font-size: 11px;
-      font-weight: 600;
+    /* ── ミニバッジ ── */
+    .badge {
+      display: inline-flex; align-items: center;
+      padding: 2px 7px; border-radius: 6px;
+      font-size: 10px; font-weight: 700; white-space: nowrap;
     }
-    .badge-strict {
-      display: inline-block;
-      background: rgba(251,191,36,0.15);
-      color: var(--gold);
-      border: 1px solid rgba(251,191,36,0.3);
-      padding: 2px 8px;
-      border-radius: 6px;
-      font-size: 11px;
-      font-weight: 600;
-    }
-    .badge-sell { background: rgba(239,68,68,0.12) !important; color: var(--red) !important; border-color: rgba(239,68,68,0.3) !important; }
-    .badge-buy  { background: rgba(79,142,247,0.12) !important; color: var(--accent) !important; border-color: rgba(79,142,247,0.3) !important; }
+    .badge-buy    { background: rgba(91,156,246,0.15); color: var(--accent); border: 1px solid rgba(91,156,246,0.3); }
+    .badge-sell   { background: rgba(239,68,68,0.12);  color: var(--red);    border: 1px solid rgba(239,68,68,0.3); }
+    .badge-pass   { background: rgba(34,197,94,0.12);  color: var(--green);  border: 1px solid rgba(34,197,94,0.3); }
+    .badge-strict { background: rgba(251,191,36,0.12); color: var(--gold);   border: 1px solid rgba(251,191,36,0.3); }
 
-    /* ── グリッド（チャート + 取引履歴） ── */
-    .bottom-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    /* ── プログレスバー ── */
+    .progress-wrap { background: var(--border); border-radius: 3px; height: 4px; margin-top: 4px; overflow: hidden; }
+    .progress-bar  { height: 100%; border-radius: 3px; transition: width 0.5s ease; }
+
+    /* ── ストップ表示 ── */
+    .stop-price { font-size: 11px; color: var(--red); font-weight: 600; }
+
+    /* ── グリッド（下段） ── */
+    .bottom-grid { display: grid; grid-template-columns: 55% 45%; gap: 14px; }
     .chart-box {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 18px;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 12px; padding: 16px;
     }
-    .chart-box canvas { max-height: 220px; }
+    .chart-box canvas { max-height: 230px; }
 
     /* ── 空状態 ── */
-    .empty {
-      text-align: center;
-      padding: 40px;
-      color: var(--muted);
-      font-size: 13px;
-    }
-    .empty .icon { font-size: 32px; margin-bottom: 10px; }
+    .empty { text-align: center; padding: 36px; color: var(--muted); font-size: 12px; }
+    .empty .icon { font-size: 28px; margin-bottom: 8px; }
 
-    /* ── ローディング ── */
-    .loading {
-      display: inline-block;
-      width: 16px; height: 16px;
-      border: 2px solid var(--border);
-      border-top-color: var(--accent);
-      border-radius: 50%;
-      animation: spin 0.8s linear infinite;
-      vertical-align: middle;
-      margin-right: 6px;
+    /* ── ローディングスピナー ── */
+    .spinner {
+      display: inline-block; width: 14px; height: 14px;
+      border: 2px solid var(--border); border-top-color: var(--accent);
+      border-radius: 50%; animation: spin 0.7s linear infinite;
+      vertical-align: middle; margin-right: 5px;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
 
-    /* ── トースト通知 ── */
+    /* ── トースト ── */
     #toast {
-      position: fixed;
-      bottom: 24px;
-      right: 24px;
-      background: var(--surface2);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 12px 20px;
-      font-size: 13px;
-      font-weight: 600;
-      opacity: 0;
-      transform: translateY(10px);
-      transition: all 0.3s;
-      z-index: 9999;
-      max-width: 340px;
+      position: fixed; bottom: 22px; right: 22px;
+      background: var(--surface2); border: 1px solid var(--border);
+      border-radius: 10px; padding: 11px 18px; font-size: 13px; font-weight: 600;
+      opacity: 0; transform: translateY(8px); transition: all 0.25s;
+      z-index: 9999; max-width: 350px;
     }
     #toast.show { opacity: 1; transform: translateY(0); }
-    #toast.success { border-color: var(--green); color: var(--green); }
-    #toast.info    { border-color: var(--accent); color: var(--accent); }
-    #toast.error   { border-color: var(--red); color: var(--red); }
-    #toast.warning { border-color: var(--yellow); color: var(--yellow); }
+    #toast.success { border-color: var(--green);  color: var(--green); }
+    #toast.info    { border-color: var(--accent);  color: var(--accent); }
+    #toast.error   { border-color: var(--red);     color: var(--red); }
+    #toast.warning { border-color: var(--yellow);  color: var(--yellow); }
 
-    /* ── スクリーニング中オーバーレイ ── */
+    /* ── オーバーレイ ── */
     #overlay {
-      display: none;
-      position: fixed;
-      inset: 0;
-      background: rgba(0,0,0,0.75);
-      z-index: 200;
-      align-items: center;
-      justify-content: center;
-      flex-direction: column;
-      gap: 16px;
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,0.8); z-index: 200;
+      align-items: center; justify-content: center; flex-direction: column; gap: 14px;
     }
     #overlay.show { display: flex; }
-    #overlay .msg { color: #fff; font-size: 17px; font-weight: 700; }
-    #overlay .sub { color: var(--muted); font-size: 13px; }
+    #overlay .msg { color: #fff; font-size: 16px; font-weight: 700; }
+    #overlay .sub { color: var(--muted); font-size: 12px; }
 
     /* ── ステータスバー ── */
     .status-bar {
-      background: var(--surface2);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 8px 14px;
-      font-size: 12px;
-      color: var(--muted);
-      margin-bottom: 20px;
-      display: flex;
-      gap: 20px;
-      align-items: center;
-      flex-wrap: wrap;
+      background: var(--surface2); border: 1px solid var(--border); border-radius: 8px;
+      padding: 7px 14px; font-size: 11px; color: var(--muted); margin-bottom: 16px;
+      display: flex; gap: 18px; align-items: center; flex-wrap: wrap;
     }
-    .status-dot {
-      width: 8px; height: 8px;
-      border-radius: 50%;
-      background: var(--green);
-      display: inline-block;
-      margin-right: 4px;
-      animation: pulse 2s infinite;
+    .dot {
+      width: 7px; height: 7px; border-radius: 50%; background: var(--green);
+      display: inline-block; margin-right: 4px; animation: pulse 2s infinite;
     }
-    @keyframes pulse {
-      0%, 100% { opacity: 1; }
-      50%       { opacity: 0.4; }
-    }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.35} }
 
-    /* レスポンシブ */
-    @media (max-width: 900px) {
-      .cards { grid-template-columns: repeat(2, 1fr); }
+    /* ── NC比率バー（視覚化） ── */
+    .nc-bar-wrap { display: flex; align-items: center; gap: 6px; }
+    .nc-bar { height: 6px; border-radius: 3px; min-width: 2px; max-width: 80px; }
+
+    @media (max-width: 1100px) {
+      .cards { grid-template-columns: repeat(3, 1fr); }
       .bottom-grid { grid-template-columns: 1fr; }
-      .header { flex-wrap: wrap; gap: 10px; }
+    }
+    @media (max-width: 700px) {
+      .cards { grid-template-columns: repeat(2, 1fr); }
+      .header { flex-wrap: wrap; gap: 8px; }
     }
   </style>
 </head>
 <body>
 
-<!-- ヘッダー -->
 <header class="header">
   <div class="header-title">
     <h1>📊 清原式 割安小型株シミュレーター</h1>
-    <span class="badge">仮想200万円</span>
+    <span class="badge-pro">Pro v3</span>
   </div>
   <div class="header-actions">
-    <button class="btn btn-primary" onclick="runScreening()" id="btn-screening">
-      🔍 スクリーニング実行
-    </button>
-    <button class="btn btn-success" onclick="runTrade()" id="btn-trade">
-      💹 AI取引を実行
-    </button>
+    <button class="btn btn-primary" onclick="runScreening()" id="btn-screening">🔍 スクリーニング</button>
+    <button class="btn btn-success" onclick="runTrade()" id="btn-trade">💹 取引を実行</button>
     <button class="btn btn-secondary" onclick="refreshAll()">🔄 更新</button>
     <button class="btn btn-danger" onclick="confirmReset()">↩ リセット</button>
   </div>
 </header>
 
-<!-- スクリーニング中オーバーレイ -->
 <div id="overlay">
-  <div class="loading" style="width:40px;height:40px;border-width:4px;"></div>
+  <div class="spinner" style="width:36px;height:36px;border-width:3px;"></div>
   <div class="msg" id="overlay-msg">スクリーニング実行中...</div>
-  <div class="sub">約90銘柄を順番にチェックしています。2〜3分かかります。</div>
+  <div class="sub">約90銘柄の財務データを取得中です（2〜3分）</div>
 </div>
 
-<!-- メイン -->
 <main class="main">
 
-  <!-- ステータスバー -->
   <div class="status-bar">
-    <span><span class="status-dot"></span>サーバー稼働中</span>
-    <span id="status-scheduler">次回売りチェック: 取得中...</span>
-    <span id="status-time">最終更新: —</span>
+    <span><span class="dot"></span>稼働中 — 1分ごと自動売買</span>
+    <span id="status-next">次回: 取得中...</span>
+    <span id="status-time">更新: —</span>
+    <span id="status-stats" style="color:var(--text)">勝率: —</span>
   </div>
 
-  <!-- サマリーカード -->
+  <!-- サマリーカード（6枚） -->
   <section class="section">
     <div class="cards">
-      <div class="card">
+      <div class="card accent-blue">
         <div class="card-label">💰 総資産</div>
-        <div class="card-value" id="total-assets">—</div>
-        <div class="card-sub">初期資金: 200万円</div>
+        <div class="card-value text-blue" id="total-assets">—</div>
+        <div class="card-sub">初期: 200万円</div>
       </div>
-      <div class="card">
+      <div class="card accent-green">
         <div class="card-label">💵 現金残高</div>
         <div class="card-value" id="cash">—</div>
         <div class="card-sub" id="cash-ratio">現金比率: —</div>
@@ -320,22 +248,32 @@
       <div class="card">
         <div class="card-label">📈 損益</div>
         <div class="card-value" id="pnl">—</div>
-        <div class="card-sub" id="pnl-pct">損益率: —</div>
+        <div class="card-sub" id="pnl-pct">—</div>
+      </div>
+      <div class="card accent-purple">
+        <div class="card-label">📦 保有銘柄</div>
+        <div class="card-value text-purple" id="holding-count">0</div>
+        <div class="card-sub">上限10銘柄</div>
+      </div>
+      <div class="card accent-gold">
+        <div class="card-label">🏆 勝率</div>
+        <div class="card-value text-gold" id="win-rate">—</div>
+        <div class="card-sub" id="win-detail">取引実績なし</div>
       </div>
       <div class="card">
-        <div class="card-label">📦 保有銘柄数</div>
-        <div class="card-value text-blue" id="holding-count">0銘柄</div>
-        <div class="card-sub">目標: 10銘柄まで分散</div>
+        <div class="card-label">💎 候補銘柄</div>
+        <div class="card-value text-green" id="screened-summary">0</div>
+        <div class="card-sub">スクリーニング通過数</div>
       </div>
     </div>
   </section>
 
-  <!-- 投資候補（スクリーニング通過銘柄） -->
+  <!-- スクリーニング通過銘柄 -->
   <section class="section">
     <div class="section-title">
       💎 投資候補（スクリーニング通過銘柄）
-      <span class="count" id="screened-count">0件</span>
-      <span style="font-size:12px;color:var(--muted);font-weight:400;">← 4条件をすべてクリアした割安銘柄</span>
+      <span class="count-badge" id="screened-count">0件</span>
+      <span class="hint-text">← 4条件クリアの超割安銘柄 / NC比率が高いほど優先購入</span>
     </div>
     <div class="table-wrap">
       <table>
@@ -343,27 +281,28 @@
           <tr>
             <th>銘柄名</th>
             <th>コード</th>
-            <th title="会社全体の値段（小さいほど小型株）">時価総額（億）</th>
-            <th title="株価÷1年間の利益。数字が低いほど安い">PER（倍）</th>
-            <th title="株価÷純資産。1倍以下は会社の資産より安く買える">PBR（倍）</th>
-            <th title="1年以内に現金化できる資産の合計">流動資産（億）</th>
-            <th title="会社が返さないといけないお金の合計">負債（億）</th>
-            <th title="流動資産から負債を引いた実質的な現金（多いほど安全）">NC（億）</th>
-            <th title="ネットキャッシュ÷時価総額。1.0以上は現金が会社の値段を上回る超割安">NC比率 ⭐</th>
+            <th title="会社全体の時価。500億以下が対象">時価総額</th>
+            <th title="株価÷利益。低いほど安い。15倍以下が条件">PER</th>
+            <th title="株価÷純資産。1.5倍以下が条件">PBR</th>
+            <th title="流動資産（現金化しやすい資産）">流動資産</th>
+            <th title="返さないといけないお金の合計">負債</th>
+            <th title="流動資産 - 負債 = 実質の現金">NC額</th>
+            <th title="NC÷時価総額。1.0以上 = 現金が会社の値段超え">NC比率 ⭐</th>
+            <th>スコア</th>
             <th>判定</th>
           </tr>
         </thead>
         <tbody id="screened-tbody">
-          <tr><td colspan="10" class="empty">
+          <tr><td colspan="11" class="empty">
             <div class="icon">🔍</div>
-            「スクリーニング実行」ボタンを押して投資候補を探しましょう
+            「スクリーニング」ボタンを押してください（初回のみ2〜3分かかります）
           </td></tr>
         </tbody>
       </table>
     </div>
-    <div style="margin-top:8px;padding:0 4px;font-size:12px;color:var(--muted);line-height:1.6;">
-      ⭐ <strong style="color:var(--gold)">NC比率（ネットキャッシュ比率）</strong>とは「会社が持っている現金 ÷ 会社の時価総額」のことです。
-      1.0以上なら「会社の現金が時価総額より多い」= 超割安株。清原達郎氏（元鎌倉投信）はこの指標を最重視しました。
+    <div style="margin-top:8px;font-size:11px;color:var(--muted);padding:0 2px;line-height:1.7;">
+      ⭐ <strong style="color:var(--gold)">NC比率 1.0以上</strong> = 「会社の現金 &gt; 会社の時価総額」という超割安状態。
+      清原達郎氏が最重視した指標。スコアが高い順に自動購入されます。
     </div>
   </section>
 
@@ -371,7 +310,8 @@
   <section class="section">
     <div class="section-title">
       📦 保有ポートフォリオ
-      <span class="count" id="portfolio-count">0件</span>
+      <span class="count-badge" id="portfolio-count">0件</span>
+      <span class="hint-text">← トレーリングストップで利益を守りながら2倍を狙います</span>
     </div>
     <div class="table-wrap">
       <table>
@@ -385,52 +325,43 @@
             <th>評価額</th>
             <th>含み損益</th>
             <th>損益率</th>
-            <th title="購入時のPER（株価÷利益）">買値PER</th>
-            <th title="購入時のPBR（株価÷純資産）">買値PBR</th>
-            <th title="購入時のネットキャッシュ比率">NC比率</th>
-            <th title="2倍になったら利確する目標価格">目標価格（2倍）</th>
+            <th title="最高値から-10〜-15%で自動売却。利益を守るストッパー">🛡 ストップ価格</th>
+            <th title="買い時のNC比率">NC比率</th>
+            <th title="2倍になったら自動利確">目標（2倍）</th>
+            <th>達成度</th>
           </tr>
         </thead>
         <tbody id="portfolio-tbody">
           <tr><td colspan="12" class="empty">
             <div class="icon">📭</div>
-            保有銘柄なし。スクリーニング後に「AI取引を実行」すると自動購入されます。
+            保有銘柄なし。スクリーニング → 「取引を実行」で自動購入されます。
           </td></tr>
         </tbody>
       </table>
     </div>
   </section>
 
-  <!-- チャート + 取引履歴 -->
-  <div class="bottom-grid section">
-    <!-- 資産推移チャート -->
+  <!-- 下段: チャート + 取引履歴 -->
+  <div class="bottom-grid section" style="margin-bottom:0">
     <div>
       <div class="section-title">💹 資産推移（過去60日）</div>
       <div class="chart-box">
         <canvas id="asset-chart"></canvas>
         <div id="chart-empty" class="empty" style="display:none;">
-          <div class="icon">📊</div>
-          取引後にグラフが表示されます
+          <div class="icon">📊</div>取引後にグラフが表示されます
         </div>
       </div>
     </div>
-
-    <!-- 取引履歴 -->
     <div>
       <div class="section-title">
         📋 取引履歴
-        <span class="count" id="trades-count">0件</span>
+        <span class="count-badge" id="trades-count">0件</span>
       </div>
-      <div class="table-wrap" style="max-height:290px;overflow-y:auto;">
+      <div class="table-wrap" style="max-height:295px;overflow-y:auto;">
         <table>
           <thead>
             <tr>
-              <th>日時</th>
-              <th>銘柄</th>
-              <th>売買</th>
-              <th>株数</th>
-              <th>価格</th>
-              <th>理由</th>
+              <th>日時</th><th>銘柄</th><th>売買</th><th>株数</th><th>価格</th><th>理由</th>
             </tr>
           </thead>
           <tbody id="trades-tbody">
@@ -443,331 +374,309 @@
 
 </main>
 
-<!-- トースト -->
 <div id="toast"></div>
 
 <script>
-// ==================== ユーティリティ ====================
+// ── ユーティリティ ────────────────────────────────────────
 
-function fmt(n) {
+function fmt(n, unit='円') {
   if (n == null) return '—';
-  return Number(n).toLocaleString('ja-JP', {maximumFractionDigits: 0}) + '円';
+  return Number(n).toLocaleString('ja-JP', {maximumFractionDigits:0}) + unit;
 }
-
-function showToast(msg, type = 'info') {
+function esc(s) {
+  if (s == null) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function showToast(msg, type='info') {
   const t = document.getElementById('toast');
   t.textContent = msg;
   t.className = 'show ' + type;
-  clearTimeout(t._timer);
-  t._timer = setTimeout(() => { t.className = ''; }, 4500);
+  clearTimeout(t._t);
+  t._t = setTimeout(() => t.className = '', 4500);
 }
-
-function setOverlay(show, msg = 'スクリーニング実行中...') {
+function setOverlay(show, msg='スクリーニング実行中...') {
   document.getElementById('overlay-msg').textContent = msg;
   document.getElementById('overlay').classList.toggle('show', show);
 }
 
-// ==================== データ取得 ====================
+// ── データ取得 ──────────────────────────────────────────
 
 let assetChart = null;
 
 async function fetchStatus() {
   try {
-    const r = await fetch('/api/status');
-    const d = await r.json();
-    const pnl    = d.pnl    || 0;
-    const pnlPct = d.pnl_pct || 0;
+    const d = await (await fetch('/api/status')).json();
+    const pnl = d.pnl || 0;
     const cashRatio = d.total_assets > 0 ? (d.cash / d.total_assets * 100) : 0;
 
     document.getElementById('total-assets').textContent = fmt(d.total_assets);
     document.getElementById('cash').textContent = fmt(d.cash);
     document.getElementById('cash-ratio').textContent = `現金比率: ${cashRatio.toFixed(1)}%`;
 
-    const pnlEl = document.getElementById('pnl');
-    pnlEl.textContent = (pnl >= 0 ? '+' : '') + Number(pnl).toLocaleString('ja-JP') + '円';
-    pnlEl.className = 'card-value ' + (pnl >= 0 ? 'text-green' : 'text-red');
+    const pEl = document.getElementById('pnl');
+    pEl.textContent = (pnl >= 0 ? '+' : '') + Number(pnl).toLocaleString('ja-JP') + '円';
+    pEl.className = 'card-value ' + (pnl >= 0 ? 'text-green' : 'text-red');
+    const pEl2 = document.getElementById('pnl-pct');
+    pEl2.textContent = `${pnl >= 0 ? '+' : ''}${(d.pnl_pct||0).toFixed(2)}%`;
+    pEl2.className = 'card-sub ' + (pnl >= 0 ? 'text-green' : 'text-red');
 
-    const pnlPctEl = document.getElementById('pnl-pct');
-    pnlPctEl.textContent = `損益率: ${pnl >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%`;
-    pnlPctEl.className = 'card-sub ' + (pnl >= 0 ? 'text-green' : 'text-red');
+    document.getElementById('status-time').textContent = '更新: ' + new Date().toLocaleTimeString('ja-JP');
+  } catch(e) {}
+}
 
-    document.getElementById('status-time').textContent = '最終更新: ' + new Date().toLocaleTimeString('ja-JP');
-  } catch(e) {
-    console.error('status取得エラー', e);
-  }
+async function fetchStats() {
+  try {
+    const d = await (await fetch('/api/stats')).json();
+    document.getElementById('win-rate').textContent = d.total_trades > 0 ? d.win_rate + '%' : '—';
+    document.getElementById('win-detail').textContent =
+      d.total_trades > 0 ? `${d.wins}勝${d.losses}敗 / 累計${d.total_pnl >= 0 ? '+' : ''}${Number(d.total_pnl).toLocaleString()}円` : '取引実績なし';
+    document.getElementById('status-stats').textContent =
+      d.total_trades > 0 ? `勝率: ${d.win_rate}% (${d.wins}勝${d.losses}敗)` : '勝率: —';
+  } catch(e) {}
 }
 
 async function fetchPortfolio() {
   try {
-    const r = await fetch('/api/portfolio');
-    const d = await r.json();
+    const d = await (await fetch('/api/portfolio')).json();
     const holdings = d.holdings || [];
 
     document.getElementById('holding-count').textContent = holdings.length + '銘柄';
     document.getElementById('portfolio-count').textContent = holdings.length + '件';
 
     const tbody = document.getElementById('portfolio-tbody');
-    if (holdings.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="12" class="empty">
-        <div class="icon">📭</div>
-        保有銘柄なし。スクリーニング後に「AI取引を実行」すると自動購入されます。
-      </td></tr>`;
+    if (!holdings.length) {
+      tbody.innerHTML = `<tr><td colspan="12" class="empty"><div class="icon">📭</div>保有銘柄なし</td></tr>`;
       return;
     }
 
     tbody.innerHTML = holdings.map(h => {
       const pnl    = h.unrealized_pnl || 0;
-      const pnlPct = h.unrealized_pnl_pct || 0;
+      const pct    = h.unrealized_pnl_pct || 0;
       const color  = pnl >= 0 ? 'text-green' : 'text-red';
       const sign   = pnl >= 0 ? '+' : '';
+
+      // 達成度バー（0%〜100%で2倍目標）
       const progress = h.target_price > 0
         ? Math.min(100, Math.max(0, ((h.current_price - h.avg_cost) / (h.target_price - h.avg_cost)) * 100))
         : 0;
-      const progressColor = pnlPct >= 100 ? '#fbbf24' : pnlPct >= 50 ? '#22c55e' : '#4f8ef7';
+      const barColor = pct >= 100 ? '#fbbf24' : pct >= 50 ? '#22c55e' : pct >= 0 ? '#5b9cf6' : '#ef4444';
+
+      // ストップ価格の表示（現在価格との距離%）
+      const stopPct = h.trailing_stop > 0
+        ? ((h.trailing_stop / h.current_price - 1) * 100).toFixed(1)
+        : null;
+      const stopStr = h.trailing_stop > 0
+        ? `<span class="stop-price">${Number(h.trailing_stop).toLocaleString()}円<br><span style="font-size:10px">(${stopPct}%)</span></span>`
+        : '<span class="text-muted">—</span>';
 
       return `<tr>
-        <td><strong>${escHtml(h.company_name)}</strong></td>
-        <td style="color:var(--muted);font-size:12px">${escHtml(h.ticker)}</td>
+        <td><strong>${esc(h.company_name)}</strong></td>
+        <td class="text-muted" style="font-size:11px">${esc(h.ticker)}</td>
         <td>${Number(h.shares).toLocaleString()}株</td>
         <td>${Number(h.avg_cost).toLocaleString()}円</td>
-        <td>${Number(h.current_price).toLocaleString()}円</td>
+        <td><strong>${Number(h.current_price).toLocaleString()}円</strong></td>
         <td>${Number(h.market_value).toLocaleString()}円</td>
         <td class="${color}">${sign}${Number(h.unrealized_pnl).toLocaleString()}円</td>
-        <td class="${color}" style="font-weight:700">${sign}${pnlPct.toFixed(2)}%</td>
-        <td>${h.buy_per != null ? h.buy_per.toFixed(1) + '倍' : '—'}</td>
-        <td>${h.buy_pbr != null ? h.buy_pbr.toFixed(2) + '倍' : '—'}</td>
+        <td class="${color}" style="font-weight:700;font-size:14px">${sign}${pct.toFixed(2)}%</td>
+        <td>${stopStr}</td>
         <td style="color:var(--gold);font-weight:700">${h.buy_net_cash_ratio != null ? h.buy_net_cash_ratio.toFixed(2) : '—'}</td>
-        <td>
-          <div style="font-size:12px">${h.target_price != null ? Number(h.target_price).toLocaleString() + '円' : '—'}</div>
-          ${h.target_price > 0 ? `<div style="background:var(--border);border-radius:4px;height:4px;margin-top:4px;overflow:hidden;">
-            <div style="width:${progress.toFixed(1)}%;height:100%;background:${progressColor};transition:width 0.5s;min-width:${progress>0?'4px':'0'};"></div>
-          </div>` : ''}
+        <td>${h.target_price != null ? Number(h.target_price).toLocaleString() + '円' : '—'}</td>
+        <td style="min-width:70px">
+          <div style="font-size:10px;color:var(--muted);margin-bottom:2px">${progress.toFixed(0)}%</div>
+          <div class="progress-wrap"><div class="progress-bar" style="width:${progress.toFixed(1)}%;background:${barColor}"></div></div>
         </td>
       </tr>`;
     }).join('');
-  } catch(e) {
-    console.error('portfolio取得エラー', e);
-  }
+  } catch(e) { console.error(e); }
 }
 
 async function fetchScreened() {
   try {
-    const r = await fetch('/api/screened');
-    const d = await r.json();
+    const d = await (await fetch('/api/screened')).json();
     const stocks = d.screened || [];
 
     document.getElementById('screened-count').textContent = stocks.length + '件';
+    document.getElementById('screened-summary').textContent = stocks.length;
 
     const tbody = document.getElementById('screened-tbody');
-    if (stocks.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="10" class="empty">
-        <div class="icon">🔍</div>
-        「スクリーニング実行」ボタンを押して投資候補を探しましょう
-      </td></tr>`;
+    if (!stocks.length) {
+      tbody.innerHTML = `<tr><td colspan="11" class="empty"><div class="icon">🔍</div>「スクリーニング」ボタンを押してください</td></tr>`;
       return;
     }
 
-    tbody.innerHTML = stocks.map(s => {
+    tbody.innerHTML = stocks.map((s, i) => {
       const nc = s.net_cash_ratio;
-      const isStrict = nc >= 1.0 && (s.per == null || s.per <= 10) && (s.pbr == null || s.pbr <= 1.0) && (s.market_cap_oku == null || s.market_cap_oku <= 500);
-      const ncColor = nc >= 1.0 ? 'text-gold' : nc >= 0.5 ? 'text-green' : 'text-blue';
+      const isStrict = nc >= 1.0 && (s.per == null || s.per <= 10) && (s.pbr == null || s.pbr <= 1.0);
+      const ncColor = nc >= 1.5 ? 'text-gold' : nc >= 0.8 ? 'text-green' : 'text-blue';
+      // NC比率をバーで視覚化
+      const barW = Math.min(80, (nc || 0) * 40);
+      const barColor = nc >= 1.0 ? '#fbbf24' : nc >= 0.5 ? '#22c55e' : '#5b9cf6';
 
       return `<tr>
-        <td><strong>${escHtml(s.company_name)}</strong></td>
-        <td style="color:var(--muted);font-size:12px">${escHtml(s.ticker)}</td>
+        <td>
+          <strong>${esc(s.company_name)}</strong>
+          ${i < 3 ? '<span style="font-size:10px;margin-left:4px;color:var(--gold)">🔥次の購入候補</span>' : ''}
+        </td>
+        <td class="text-muted" style="font-size:11px">${esc(s.ticker)}</td>
         <td>${s.market_cap_oku != null ? s.market_cap_oku.toFixed(0) + '億' : '—'}</td>
         <td>${s.per != null ? s.per.toFixed(1) + '倍' : '—'}</td>
         <td>${s.pbr != null ? s.pbr.toFixed(2) + '倍' : '—'}</td>
         <td>${s.current_assets_oku != null ? s.current_assets_oku.toFixed(0) + '億' : '—'}</td>
         <td>${s.total_liabilities_oku != null ? s.total_liabilities_oku.toFixed(0) + '億' : '—'}</td>
         <td>${s.net_cash_oku != null ? s.net_cash_oku.toFixed(0) + '億' : '—'}</td>
-        <td class="${ncColor}" style="font-weight:700;font-size:15px">${nc != null ? nc.toFixed(2) : '—'}</td>
-        <td>${isStrict ? '<span class="badge-strict">⭐ 厳密合格</span>' : '<span class="badge-pass">✓ 合格</span>'}</td>
+        <td class="${ncColor}">
+          <div class="nc-bar-wrap">
+            <strong style="font-size:14px">${nc != null ? nc.toFixed(2) : '—'}</strong>
+            <div class="nc-bar" style="width:${barW}px;background:${barColor};opacity:0.7;"></div>
+          </div>
+        </td>
+        <td style="color:var(--accent)">${s.score != null ? s.score.toFixed(1) : '—'}</td>
+        <td>${isStrict ? '<span class="badge badge-strict">⭐ 厳密合格</span>' : '<span class="badge badge-pass">✓ 合格</span>'}</td>
       </tr>`;
     }).join('');
-  } catch(e) {
-    console.error('screened取得エラー', e);
-  }
+  } catch(e) { console.error(e); }
 }
 
 async function fetchTrades() {
   try {
-    const r = await fetch('/api/trades?limit=30');
-    const d = await r.json();
+    const d = await (await fetch('/api/trades?limit=40')).json();
     const trades = d.trades || [];
-
     document.getElementById('trades-count').textContent = trades.length + '件';
-
     const tbody = document.getElementById('trades-tbody');
-    if (trades.length === 0) {
+    if (!trades.length) {
       tbody.innerHTML = '<tr><td colspan="6" class="empty">取引履歴なし</td></tr>';
       return;
     }
-
     tbody.innerHTML = trades.map(t => {
       const isBuy = t.action === 'buy';
-      const dateStr = t.executed_at
+      const dt = t.executed_at
         ? new Date(t.executed_at).toLocaleString('ja-JP', {month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})
         : '—';
-
       return `<tr>
-        <td style="color:var(--muted);font-size:12px;white-space:nowrap">${dateStr}</td>
-        <td><strong>${escHtml(t.company_name)}</strong><br><span style="color:var(--muted);font-size:11px">${escHtml(t.ticker)}</span></td>
-        <td><span class="badge-pass ${isBuy ? 'badge-buy' : 'badge-sell'}">${isBuy ? '買い' : '売り'}</span></td>
+        <td class="text-muted" style="font-size:11px;white-space:nowrap">${dt}</td>
+        <td><strong>${esc(t.company_name)}</strong><br><span style="font-size:10px;color:var(--muted)">${esc(t.ticker)}</span></td>
+        <td><span class="badge ${isBuy ? 'badge-buy' : 'badge-sell'}">${isBuy ? '買い' : '売り'}</span></td>
         <td>${Number(t.shares).toLocaleString()}株</td>
         <td>${Number(t.price).toLocaleString()}円</td>
-        <td style="color:var(--muted);font-size:12px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(t.reason || '—')}</td>
+        <td style="color:var(--muted);font-size:11px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.reason||'—')}</td>
       </tr>`;
     }).join('');
-  } catch(e) {
-    console.error('trades取得エラー', e);
-  }
+  } catch(e) {}
 }
 
-async function fetchAssetHistory() {
+async function fetchChart() {
   try {
-    const r = await fetch('/api/asset-history?days=60');
-    const d = await r.json();
-    const history = d.history || [];
-
+    const d = await (await fetch('/api/asset-history?days=60')).json();
+    const hist = d.history || [];
     const canvas = document.getElementById('asset-chart');
     const empty  = document.getElementById('chart-empty');
+    if (!hist.length) { canvas.style.display='none'; empty.style.display='block'; return; }
+    canvas.style.display='block'; empty.style.display='none';
 
-    if (history.length === 0) {
-      canvas.style.display = 'none';
-      empty.style.display = 'block';
-      return;
-    }
-    canvas.style.display = 'block';
-    empty.style.display = 'none';
-
-    const labels    = history.map(h => { const dt = new Date(h.date); return `${dt.getMonth()+1}/${dt.getDate()}`; });
-    const totalData = history.map(h => h.total_assets);
-    const cashData  = history.map(h => h.cash);
-    const stockData = history.map(h => h.stock_value);
-
+    const labels = hist.map(h => { const dt=new Date(h.date); return `${dt.getMonth()+1}/${dt.getDate()}`; });
     if (assetChart) assetChart.destroy();
     assetChart = new Chart(canvas, {
       type: 'line',
       data: {
         labels,
         datasets: [
-          { label: '総資産',     data: totalData, borderColor: '#4f8ef7', backgroundColor: 'rgba(79,142,247,0.1)', borderWidth: 2, fill: true, tension: 0.3, pointRadius: 2 },
-          { label: '現金',       data: cashData,  borderColor: '#8892a4', borderWidth: 1.5, borderDash: [5,3], fill: false, tension: 0.3, pointRadius: 0 },
-          { label: '株式評価額', data: stockData, borderColor: '#22c55e', borderWidth: 1.5, fill: false, tension: 0.3, pointRadius: 0 },
+          { label:'総資産',     data:hist.map(h=>h.total_assets), borderColor:'#5b9cf6', backgroundColor:'rgba(91,156,246,0.08)', borderWidth:2.5, fill:true,  tension:0.3, pointRadius:2 },
+          { label:'現金',       data:hist.map(h=>h.cash),         borderColor:'#4a5568', borderWidth:1.5, borderDash:[4,3], fill:false, tension:0.3, pointRadius:0 },
+          { label:'株式評価額', data:hist.map(h=>h.stock_value),  borderColor:'#22c55e', borderWidth:1.5, fill:false, tension:0.3, pointRadius:0 },
         ],
       },
       options: {
         responsive: true,
+        interaction: { mode:'index', intersect:false },
         plugins: {
-          legend: { labels: { color: '#8892a4', font: { size: 11 } } },
-          tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${Number(ctx.raw).toLocaleString()}円` } },
+          legend: { labels:{ color:'#7a859a', font:{size:11} } },
+          tooltip: { callbacks:{ label: ctx => `${ctx.dataset.label}: ${Number(ctx.raw).toLocaleString()}円` } },
         },
         scales: {
-          x: { ticks: { color: '#8892a4', font: { size: 11 }, maxTicksLimit: 10 }, grid: { color: '#2e3349' } },
+          x: { ticks:{ color:'#7a859a', font:{size:10}, maxTicksLimit:10 }, grid:{ color:'#1e2235' } },
           y: {
-            ticks: { color: '#8892a4', font: { size: 11 }, callback: v => (v / 10000).toFixed(0) + '万' },
-            grid: { color: '#2e3349' },
+            ticks:{ color:'#7a859a', font:{size:10}, callback: v=>(v/10000).toFixed(0)+'万' },
+            grid:{ color:'#1e2235' },
           },
         },
       },
     });
-  } catch(e) {
-    console.error('chart取得エラー', e);
-  }
-}
-
-async function fetchSchedulerStatus() {
-  try {
-    const r = await fetch('/api/scheduler/status');
-    const d = await r.json();
-    const next = d.sell_check_next
-      ? new Date(d.sell_check_next).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-      : '—';
-    document.getElementById('status-scheduler').textContent = `次回売りチェック: ${next}`;
   } catch(e) {}
 }
 
-// XSS対策
-function escHtml(str) {
-  if (str == null) return '';
-  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+async function fetchScheduler() {
+  try {
+    const d = await (await fetch('/api/scheduler/status')).json();
+    const next = d.sell_check_next
+      ? new Date(d.sell_check_next).toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit',second:'2-digit'})
+      : '—';
+    document.getElementById('status-next').textContent = `次回自動売買: ${next}`;
+  } catch(e) {}
 }
 
-// ==================== アクション ====================
+// ── アクション ───────────────────────────────────────────
 
 async function runScreening() {
-  if (!confirm('スクリーニングを実行しますか？\n\n約90銘柄の財務データを取得します。\n2〜3分ほどかかります。')) return;
-
-  setOverlay(true, 'スクリーニング実行中...');
-  const btn = document.getElementById('btn-screening');
-  btn.disabled = true;
-
+  if (!confirm('スクリーニングを実行しますか？\n約90銘柄の財務データを取得します（2〜3分）。')) return;
+  setOverlay(true);
+  document.getElementById('btn-screening').disabled = true;
   try {
-    const r = await fetch('/api/screening/run', { method: 'POST' });
-    const d = await r.json();
+    const d = await (await fetch('/api/screening/run', {method:'POST'})).json();
     setOverlay(false);
-    showToast(`✅ スクリーニング完了！ ${d.count}銘柄が条件を通過しました`, 'success');
+    showToast(`✅ スクリーニング完了！ ${d.count}銘柄通過`, 'success');
     await fetchScreened();
   } catch(e) {
     setOverlay(false);
-    showToast('❌ スクリーニング中にエラーが発生しました', 'error');
+    showToast('❌ エラーが発生しました', 'error');
   } finally {
-    btn.disabled = false;
+    document.getElementById('btn-screening').disabled = false;
   }
 }
 
 async function runTrade() {
   const btn = document.getElementById('btn-trade');
   btn.disabled = true;
-  btn.innerHTML = '<span class="loading"></span>実行中...';
-
+  btn.innerHTML = '<span class="spinner"></span>実行中...';
   try {
-    const r = await fetch('/api/trade/run', { method: 'POST' });
-    const d = await r.json();
-    const sell = d.sell_count || 0;
-    const buy  = d.buy_count  || 0;
-
-    if (sell + buy > 0) {
-      showToast(`✅ 取引完了！ 売り:${sell}件 / 買い:${buy}件`, 'success');
-    } else {
-      showToast('ℹ️ 現在は取引なし（売りシグナルなし・スクリーニング候補なし）', 'info');
-    }
+    const d = await (await fetch('/api/trade/run', {method:'POST'})).json();
+    const total = (d.sell_count||0) + (d.buy_count||0);
+    showToast(
+      total > 0
+        ? `✅ 取引完了！ 売り:${d.sell_count}件 / 買い:${d.buy_count}件`
+        : 'ℹ️ 現在は取引なし',
+      total > 0 ? 'success' : 'info'
+    );
     await refreshAll();
   } catch(e) {
-    showToast('❌ 取引実行中にエラーが発生しました', 'error');
+    showToast('❌ エラーが発生しました', 'error');
   } finally {
     btn.disabled = false;
-    btn.innerHTML = '💹 AI取引を実行';
+    btn.innerHTML = '💹 取引を実行';
   }
 }
 
 async function confirmReset() {
-  if (!confirm('⚠️ 全データをリセットして初期状態（現金200万円）に戻しますか？\n保有株・取引履歴・スクリーニング結果もすべて消えます。')) return;
+  if (!confirm('⚠️ 全データをリセットして初期状態（200万円）に戻しますか？\n保有株・取引履歴・スクリーニング結果もすべて消えます。')) return;
   try {
-    await fetch('/api/reset', { method: 'POST' });
-    showToast('🔄 リセットしました。初期資金200万円からスタートします。', 'warning');
+    await fetch('/api/reset', {method:'POST'});
+    showToast('🔄 リセット完了。初期資金200万円からスタートします。', 'warning');
     await refreshAll();
   } catch(e) {
-    showToast('❌ リセット中にエラーが発生しました', 'error');
+    showToast('❌ エラーが発生しました', 'error');
   }
 }
 
 async function refreshAll() {
   await Promise.all([
-    fetchStatus(),
-    fetchPortfolio(),
-    fetchScreened(),
-    fetchTrades(),
-    fetchAssetHistory(),
-    fetchSchedulerStatus(),
+    fetchStatus(), fetchStats(), fetchPortfolio(),
+    fetchScreened(), fetchTrades(), fetchChart(), fetchScheduler(),
   ]);
 }
 
-// ==================== 起動 ====================
+// ── 初期化・自動更新 ─────────────────────────────────────
 refreshAll();
 setInterval(refreshAll, 30_000);
-setInterval(fetchSchedulerStatus, 10_000);
+setInterval(fetchScheduler, 8_000);
 </script>
 </body>
 </html>

@@ -1,17 +1,31 @@
 """
-清原式ファンダメンタル投資エンジン
+清原式 × プロ仕様リスク管理 ハイブリッド投資エンジン
 
-【買いルール（清原式）】
-- スクリーニング通過銘柄のうち、まだ保有していないものを買う
-- 保有銘柄は最大10銘柄まで（分散投資）
-- 1銘柄への投資額 = 総資産 ÷ 10（均等配分）
-- 現金が30%以上あることが条件
+【改良ポイント】
 
-【売りルール（清原式の核心）】
-- 含み益 +100% 達成（2倍）→ 利確
-- 含み損 -30% 以下 → 損切り（ファンダメンタル悪化と判断）
-- スクリーニング条件から外れた → 撤退
-※ +30%程度では「絶対に売らない」のが清原式の核心！
+■ トレーリングストップ（利益を守りながら伸ばす）
+  - 購入後、価格が上がるたびに「ストップ価格」も引き上げる
+  - 例: 1,000円で買った株が1,500円(+50%)になったら → ストップを1,350円(-10%)に設定
+  - 通常は最高値から -15%、含み益+30%超えたら -10% に引き締める
+
+■ テクニカル入力フィルター
+  - RSI(相対力指数)が65以上（買われすぎ）の時は買わない
+  - MA5(5日平均)がMA25(25日平均)を上回っている = 上昇トレンドなら優先
+
+■ スコアベースのポジションサイズ
+  - NC比率（ネットキャッシュ比率）が高いほど多く投資
+  - 最大15%、最小5%の範囲で動的配分
+
+■ 段階的利確
+  - +50% 達成 → 半分売り（確実に利益を確定）
+  - +100% 達成 → 残り全部売り（2倍達成！）
+  - トレーリングストップに当たったら → 全部売り
+
+■ 売り優先度
+  1. 損切り（ストップ価格以下）
+  2. 2倍達成（全部売り）
+  3. +50% 達成（半分売り、1回のみ）
+  4. スクリーニング条件から外れた
 """
 from datetime import datetime
 from typing import List, Dict, Optional, Tuple
@@ -27,29 +41,45 @@ from database import (
     save_asset_snapshot,
     get_screened_stocks,
     is_screened,
+    update_trailing_stop,
+    mark_partial_taken,
+    get_trade_stats,
 )
 from fundamental_data import get_fundamental, get_current_price
 from stock_universe import SMALL_CAP_UNIVERSE
 
-# ── リスク管理パラメータ ──────────────────────────────────
-MAX_HOLDINGS       = 10      # 最大保有銘柄数
-TARGET_ALLOCATION  = 0.10    # 1銘柄あたりの目標配分（総資産の10%）
-MIN_CASH_RATIO     = 0.20    # 現金は常に総資産の20%以上を維持
-COMMISSION_RATE    = 0.001   # 手数料 0.1%
-MIN_COMMISSION     = 100     # 最低手数料 100円
+try:
+    from stock_data import get_stock_summary, get_prices_bulk
+    HAS_STOCK_DATA = True
+except ImportError:
+    HAS_STOCK_DATA = False
 
-# ── 売り判断の閾値 ──────────────────────────────────────
-PROFIT_TARGET_PCT  = 100.0   # 利確ライン: +100%（2倍）
-STOP_LOSS_PCT      = -30.0   # 損切りライン: -30%
+# ── リスク管理パラメータ ──────────────────────────────────
+MAX_HOLDINGS           = 10     # 最大保有銘柄数
+MIN_POSITION_RATIO     = 0.05   # 最小投資比率（総資産の5%）
+MAX_POSITION_RATIO     = 0.15   # 最大投資比率（総資産の15%）
+MIN_CASH_RATIO         = 0.20   # 常に現金20%以上を維持
+COMMISSION_RATE        = 0.001  # 手数料 0.1%
+MIN_COMMISSION         = 100    # 最低手数料 100円
+
+# ── トレーリングストップ設定 ──────────────────────────────
+TRAIL_INITIAL_PCT      = 0.85   # 初期ストップ: 最高値の 85%（= -15%）
+TRAIL_TIGHT_PCT        = 0.90   # 引き締め後: 最高値の 90%（= -10%）
+TRAIL_TIGHTEN_TRIGGER  = 30.0   # 含み益がこの%を超えたらストップを引き締める
+
+# ── 利確設定 ────────────────────────────────────────────
+PROFIT_TARGET_FULL     = 100.0  # 全部売り: +100%（2倍）
+PROFIT_TARGET_PARTIAL  = 50.0   # 半分売り: +50%（1回のみ）
+
+# ── テクニカルフィルター ─────────────────────────────────
+RSI_MAX_FOR_BUY        = 65     # 買い時のRSI上限（これ以上は買わない）
 
 
 def calc_commission(amount: float) -> float:
-    """手数料を計算する（0.1%、最低100円）"""
     return max(amount * COMMISSION_RATE, MIN_COMMISSION)
 
 
 def calc_total_assets(cash: float, portfolio: List[Dict], prices: Dict[str, float]) -> float:
-    """総資産 = 現金 + 保有株の時価評価額"""
     stock_value = sum(
         h["shares"] * prices.get(h["ticker"], h["avg_cost"])
         for h in portfolio
@@ -58,123 +88,176 @@ def calc_total_assets(cash: float, portfolio: List[Dict], prices: Dict[str, floa
 
 
 def _get_prices_for_portfolio(portfolio: List[Dict]) -> Dict[str, float]:
-    """保有銘柄の現在価格を一括取得"""
-    prices = {}
+    """保有銘柄の現在価格を一括取得（速度優先）"""
+    if not portfolio:
+        return {}
+    tickers = [h["ticker"] for h in portfolio]
+    # 一括取得できれば使う（速い）
+    if HAS_STOCK_DATA:
+        try:
+            prices = get_prices_bulk(tickers)
+            result = {}
+            for h in portfolio:
+                p = prices.get(h["ticker"])
+                result[h["ticker"]] = p if p else h["avg_cost"]
+            return result
+        except Exception:
+            pass
+    # フォールバック: 個別取得
+    result = {}
     for h in portfolio:
-        price = get_current_price(h["ticker"])
-        if price:
-            prices[h["ticker"]] = price
-        else:
-            prices[h["ticker"]] = h["avg_cost"]  # 取得できなければ取得価格で代用
-    return prices
+        p = get_current_price(h["ticker"])
+        result[h["ticker"]] = p if p else h["avg_cost"]
+    return result
 
 
-def _decide_sell(holding: Dict, current_price: float) -> Tuple[bool, str]:
+def _calc_trailing_stop(peak_price: float, pnl_pct: float) -> float:
     """
-    1銘柄について売り判断を行う。
+    トレーリングストップ価格を計算する。
 
-    返り値: (売るかどうか, 理由)
+    - 通常: 最高値 × 85%（-15%）
+    - 含み益+30%超: 最高値 × 90%（-10%）→ 利益を守るために引き締め
+    """
+    if pnl_pct >= TRAIL_TIGHTEN_TRIGGER:
+        return round(peak_price * TRAIL_TIGHT_PCT, 1)
+    return round(peak_price * TRAIL_INITIAL_PCT, 1)
+
+
+def _decide_sell(holding: Dict, current_price: float) -> Tuple[Optional[str], str]:
+    """
+    1銘柄の売り判断。
+
+    返り値: ("full" | "half" | None, 理由)
+    - "full"  → 全株売却
+    - "half"  → 半分だけ売却（部分利確）
+    - None    → 売らない（保有継続）
     """
     avg_cost = holding["avg_cost"]
     if avg_cost <= 0:
-        return False, ""
+        return None, ""
 
     pnl_pct = (current_price / avg_cost - 1) * 100
 
-    # ① 含み益 +100% 達成 → 利確！
-    if pnl_pct >= PROFIT_TARGET_PCT:
-        return True, f"目標達成！含み益+{pnl_pct:.1f}%（2倍達成）"
+    # 最高値とトレーリングストップを更新
+    peak = max(holding.get("peak_price") or avg_cost, current_price)
+    trail = _calc_trailing_stop(peak, pnl_pct)
 
-    # ② 含み損 -30% 以下 → 損切り
-    if pnl_pct <= STOP_LOSS_PCT:
-        return True, f"損切り（含み損{pnl_pct:.1f}%）"
+    # DB のストップ価格も更新
+    update_trailing_stop(holding["ticker"], peak, trail)
 
-    # ③ スクリーニング条件から外れた → 撤退
-    if not is_screened(holding["ticker"]):
-        # スクリーニング結果がある場合のみチェック（空の場合は売らない）
-        screened = get_screened_stocks()
-        if len(screened) > 0:  # スクリーニングが実行済みの場合のみ
-            return True, "スクリーニング条件から外れた（ファンダメンタル悪化）"
+    # ① トレーリングストップに当たった（損失または利益の一部を守る）
+    if current_price < trail:
+        if pnl_pct >= 0:
+            return "full", f"トレーリングストップ発動（最高値{peak:,.0f}円 → ストップ{trail:,.0f}円、含み益{pnl_pct:+.1f}%）"
+        else:
+            return "full", f"損切り発動（ストップ{trail:,.0f}円、含み損{pnl_pct:.1f}%）"
 
-    return False, ""
+    # ② 2倍達成 → 全部利確
+    if pnl_pct >= PROFIT_TARGET_FULL:
+        return "full", f"🎉 2倍達成！ +{pnl_pct:.1f}% 全量利確"
+
+    # ③ +50% 達成 → 半分利確（1回のみ）
+    partial_taken = holding.get("partial_taken") or 0
+    if pnl_pct >= PROFIT_TARGET_PARTIAL and not partial_taken and holding["shares"] >= 2:
+        return "half", f"中間利確 +{pnl_pct:.1f}% 半分売却（残りは2倍まで保有）"
+
+    # ④ スクリーニング条件から外れた
+    screened_list = get_screened_stocks()
+    if len(screened_list) > 0 and not is_screened(holding["ticker"]):
+        return "full", "ファンダメンタル悪化（スクリーニング条件から外れた）"
+
+    return None, ""
+
+
+def _calc_position_size(total_assets: float, nc_ratio: Optional[float]) -> float:
+    """
+    スコアベースのポジションサイズ計算。
+
+    NC比率が高い銘柄ほど多く投資する（清原式の確信度に応じた配分）。
+    範囲: MIN_POSITION_RATIO ～ MAX_POSITION_RATIO
+    """
+    if nc_ratio is None:
+        return MIN_POSITION_RATIO
+
+    # NC比率 0.3 → 5%、1.0 → 10%、2.0以上 → 15%
+    ratio = MIN_POSITION_RATIO + (MAX_POSITION_RATIO - MIN_POSITION_RATIO) * min(1.0, (nc_ratio - 0.3) / 1.7)
+    ratio = max(MIN_POSITION_RATIO, min(MAX_POSITION_RATIO, ratio))
+    return ratio
 
 
 def run_sell_check() -> Dict:
     """
-    【毎分実行】保有銘柄の売りシグナルをチェックして実行する。
+    【毎分実行】保有銘柄の売りシグナルチェック。
 
-    2倍達成・損切り・ファンダメンタル悪化のいずれかで自動売却。
+    トレーリングストップ・2倍達成・中間利確・ファンダメンタル悪化を確認し、
+    条件を満たした銘柄を自動売却します。
     """
-    print(f"\n📡 保有銘柄の売りチェック中... ({datetime.now().strftime('%H:%M')})")
-
-    account   = get_account()
     portfolio = get_portfolio()
-
     if not portfolio:
-        print("   保有銘柄なし")
-        return {"status": "ok", "executed": [], "message": "保有銘柄なし"}
+        return {"status": "ok", "executed": []}
 
-    prices = _get_prices_for_portfolio(portfolio)
-    total_assets = calc_total_assets(account["cash"], portfolio, prices)
-
-    executed = []
+    prices    = _get_prices_for_portfolio(portfolio)
+    executed  = []
 
     for holding in portfolio:
-        ticker = holding["ticker"]
+        ticker        = holding["ticker"]
         current_price = prices.get(ticker, holding["avg_cost"])
 
-        should_sell, reason = _decide_sell(holding, current_price)
+        sell_type, reason = _decide_sell(holding, current_price)
+        if not sell_type:
+            continue
 
-        if should_sell:
-            # 全株売却
-            shares = holding["shares"]
-            trade_amount = current_price * shares
-            commission   = calc_commission(trade_amount)
-            proceeds     = trade_amount - commission
+        # 売る株数を決定
+        if sell_type == "half":
+            sell_shares = max(1, holding["shares"] // 2)
+        else:
+            sell_shares = holding["shares"]
 
-            # DB 更新
+        trade_amount = current_price * sell_shares
+        commission   = calc_commission(trade_amount)
+        proceeds     = trade_amount - commission
+
+        # DB 更新
+        if sell_shares >= holding["shares"]:
             delete_holding(ticker)
-            current_cash = get_account()["cash"]
-            update_cash(current_cash + proceeds)
-            save_trade(
-                ticker, holding["company_name"], "sell",
-                shares, current_price, trade_amount, commission, reason
-            )
-            print(f"✅ 売却: {holding['company_name']}({ticker}) "
-                  f"{shares}株 @{current_price:,.0f}円 → {reason}")
-            executed.append(f"sell:{ticker}")
+        else:
+            remaining = holding["shares"] - sell_shares
+            upsert_holding(ticker, holding["company_name"], remaining, holding["avg_cost"])
+            mark_partial_taken(ticker)
 
-    # 資産スナップショット保存
-    account_after   = get_account()
-    portfolio_after = get_portfolio()
-    prices_after    = _get_prices_for_portfolio(portfolio_after)
-    total_after     = calc_total_assets(account_after["cash"], portfolio_after, prices_after)
-    save_asset_snapshot(total_after, account_after["cash"], total_after - account_after["cash"])
+        current_cash = get_account()["cash"]
+        update_cash(current_cash + proceeds)
+        save_trade(ticker, holding["company_name"], "sell",
+                   sell_shares, current_price, trade_amount, commission, reason)
+
+        pnl = (current_price - holding["avg_cost"]) * sell_shares
+        print(f"✅ 売却: {holding['company_name']}({ticker}) {sell_shares}株 "
+              f"@{current_price:,.0f}円 損益:{pnl:+,.0f}円 → {reason}")
+        executed.append(f"sell:{ticker}")
 
     return {"status": "ok", "executed": executed}
 
 
 def run_buy_execution() -> Dict:
     """
-    【毎朝7時 or 手動実行】スクリーニング通過銘柄を購入する。
+    【毎分実行】スクリーニング通過銘柄の購入チェック。
 
-    - 保有10銘柄未満のスロットに、スクリーニング上位銘柄を買う
-    - 1銘柄あたり「総資産 ÷ 10」を目安に買い付ける
+    保有10銘柄未満かつ現金に余裕がある場合、
+    RSIフィルターをパスした銘柄を自動購入します。
     """
-    print(f"\n💰 買い付けチェックを開始... ({datetime.now().strftime('%H:%M')})")
-
-    account      = get_account()
-    portfolio    = get_portfolio()
-    screened     = get_screened_stocks()  # スコア降順
-
+    screened  = get_screened_stocks()  # スコア降順（キャッシュ済みで高速）
     if not screened:
-        print("   スクリーニング通過銘柄なし（先にスクリーニングを実行してください）")
-        return {"status": "ok", "executed": [], "message": "スクリーニング通過銘柄なし"}
+        return {"status": "ok", "executed": []}
 
-    # 現在の価格取得（保有銘柄）
+    account  = get_account()
+    portfolio = get_portfolio()
+
+    held_tickers = {h["ticker"] for h in portfolio}
+    if len(held_tickers) >= MAX_HOLDINGS:
+        return {"status": "ok", "executed": [], "message": f"保有上限({MAX_HOLDINGS}銘柄)"}
+
     prices = _get_prices_for_portfolio(portfolio)
-    # スクリーニング通過銘柄の価格も取得
-    holding_tickers = {h["ticker"] for h in portfolio}
+    # スクリーニング候補の価格も追加
     for s in screened:
         if s["ticker"] not in prices:
             p = get_current_price(s["ticker"])
@@ -183,34 +266,42 @@ def run_buy_execution() -> Dict:
 
     total_assets = calc_total_assets(account["cash"], portfolio, prices)
     current_cash = account["cash"]
-    n_holdings   = len(portfolio)
-
-    print(f"   総資産: {total_assets:,.0f}円 / 現金: {current_cash:,.0f}円 / 保有: {n_holdings}/{MAX_HOLDINGS}銘柄")
-
     executed = []
 
     for candidate in screened:
         ticker = candidate["ticker"]
 
-        # すでに保有中 or 最大保有数に達したらスキップ
-        if ticker in holding_tickers:
+        if ticker in held_tickers:
             continue
-        if n_holdings >= MAX_HOLDINGS:
-            print(f"   保有上限({MAX_HOLDINGS}銘柄)に達したため終了")
+        if len(held_tickers) >= MAX_HOLDINGS:
             break
 
         current_price = prices.get(ticker)
         if not current_price or current_price <= 0:
-            print(f"   {ticker} 価格取得不可のためスキップ")
             continue
 
-        # 1銘柄あたりの目標投資額
-        target_amount = total_assets * TARGET_ALLOCATION
+        # ── テクニカルフィルター（RSI確認）──
+        rsi = None
+        if HAS_STOCK_DATA:
+            try:
+                summary = get_stock_summary(ticker)
+                if summary:
+                    rsi = summary.get("rsi14")
+                    # RSI が高すぎる（買われすぎ）場合はスキップ
+                    if rsi and rsi > RSI_MAX_FOR_BUY:
+                        print(f"  ⏸ {ticker} RSI{rsi:.0f} > {RSI_MAX_FOR_BUY}（高すぎ）スキップ")
+                        continue
+            except Exception:
+                pass
 
-        # 現金制約チェック（現金20%は残す）
+        # ── ポジションサイズ計算 ─────────────────────────────
+        nc_ratio      = candidate.get("net_cash_ratio")
+        pos_ratio     = _calc_position_size(total_assets, nc_ratio)
+        target_amount = total_assets * pos_ratio
+
         available_cash = current_cash - total_assets * MIN_CASH_RATIO
         if available_cash < current_price:
-            print(f"   {ticker} 使える現金不足のためスキップ（使える残高: {available_cash:,.0f}円）")
+            print(f"  ⏸ {ticker} 使える現金不足（{available_cash:,.0f}円）スキップ")
             continue
 
         invest_amount = min(target_amount, available_cash)
@@ -220,88 +311,84 @@ def run_buy_execution() -> Dict:
         commission   = calc_commission(trade_amount)
         total_cost   = trade_amount + commission
 
-        # 最終現金チェック
-        if current_cash - total_cost < total_assets * MIN_CASH_RATIO:
-            shares = max(1, int(available_cash / (current_price * (1 + COMMISSION_RATE))))
+        if total_cost > current_cash - total_assets * MIN_CASH_RATIO:
+            shares       = max(1, int((available_cash * 0.99) / current_price))
             trade_amount = current_price * shares
             commission   = calc_commission(trade_amount)
             total_cost   = trade_amount + commission
 
         if shares <= 0 or total_cost > current_cash:
-            print(f"   {ticker} 資金不足のためスキップ")
             continue
 
-        # 財務データを取得して買い付け時の指標を記録
-        fdata = get_fundamental(ticker)
-
         company_name = candidate.get("company_name") or SMALL_CAP_UNIVERSE.get(ticker, ticker)
+
+        # 初期トレーリングストップ設定
+        initial_trail = round(current_price * TRAIL_INITIAL_PCT, 1)
+
+        fdata = get_fundamental(ticker)
 
         # DB 更新
         upsert_holding(
             ticker, company_name, shares, current_price,
-            buy_per=fdata.get("per") if fdata else None,
-            buy_pbr=fdata.get("pbr") if fdata else None,
-            buy_net_cash_ratio=fdata.get("net_cash_ratio") if fdata else None,
-            target_price=round(current_price * 2, 1),  # 2倍を目標価格に設定
-            catalyst_notes=f"NC比率:{candidate.get('net_cash_ratio', 'N/A')}",
+            buy_per=fdata.get("per")             if fdata else None,
+            buy_pbr=fdata.get("pbr")             if fdata else None,
+            buy_net_cash_ratio=nc_ratio,
+            target_price=round(current_price * 2, 1),
+            catalyst_notes=f"NC比率:{nc_ratio:.2f}" if nc_ratio else None,
+            peak_price=current_price,
+            trailing_stop=initial_trail,
         )
-        current_cash = get_account()["cash"]
-        update_cash(current_cash - total_cost)
-        current_cash = current_cash - total_cost
+        current_cash_updated = get_account()["cash"]
+        update_cash(current_cash_updated - total_cost)
+        current_cash = current_cash_updated - total_cost
 
-        save_trade(
-            ticker, company_name, "buy",
-            shares, current_price, trade_amount, commission,
-            f"清原式スクリーニング通過（NC比率:{candidate.get('net_cash_ratio', 'N/A')}）"
-        )
+        reason = (f"清原式スクリーニング通過 NC比率:{nc_ratio:.2f}"
+                  f"{f' RSI:{rsi:.0f}' if rsi else ''}"
+                  f" 配分:{pos_ratio*100:.0f}%")
+        save_trade(ticker, company_name, "buy",
+                   shares, current_price, trade_amount, commission, reason)
 
-        n_holdings += 1
-        holding_tickers.add(ticker)
+        held_tickers.add(ticker)
         executed.append(f"buy:{ticker}")
         print(f"✅ 購入: {company_name}({ticker}) {shares}株 @{current_price:,.0f}円 "
-              f"手数料:{commission:.0f}円 目標:{round(current_price*2, 1):,.0f}円")
+              f"ストップ:{initial_trail:,.0f}円 目標:{round(current_price*2,1):,.0f}円")
 
-    # 資産スナップショット保存
+    return {"status": "ok", "executed": executed}
+
+
+def run_fundamental_trading() -> Dict:
+    """
+    毎分実行されるメイン関数。
+    売りチェック → 買い付けチェック → 資産スナップショット保存。
+    """
+    now_str = datetime.now().strftime("%H:%M:%S")
+    print(f"\n[{now_str}] 📊 売買チェック開始", end=" ", flush=True)
+
+    sell_result = run_sell_check()
+    buy_result  = run_buy_execution()
+
+    all_executed = sell_result.get("executed", []) + buy_result.get("executed", [])
+
+    # 取引があった時だけ詳細ログ
+    if all_executed:
+        print(f"→ 売り:{len(sell_result['executed'])}件 買い:{len(buy_result['executed'])}件")
+    else:
+        print("→ 取引なし")
+
+    # 資産スナップショット保存（グラフ用）
     account_after   = get_account()
     portfolio_after = get_portfolio()
     prices_after    = _get_prices_for_portfolio(portfolio_after)
     total_after     = calc_total_assets(account_after["cash"], portfolio_after, prices_after)
     save_asset_snapshot(total_after, account_after["cash"], total_after - account_after["cash"])
 
-    print(f"💰 買い付け完了: {len(executed)}件")
-    return {"status": "ok", "executed": executed, "total_assets": round(total_after, 0)}
-
-
-def run_fundamental_trading() -> Dict:
-    """
-    売りチェック + 買い付けを一括実行するメイン関数。
-    手動で「AI取引を実行」ボタンを押したときに呼ばれます。
-    """
-    print(f"\n{'='*50}")
-    print(f"📊 清原式自動売買 開始: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"{'='*50}")
-
-    sell_result = run_sell_check()
-    buy_result  = run_buy_execution()
-
-    account_final   = get_account()
-    portfolio_final = get_portfolio()
-    prices_final    = _get_prices_for_portfolio(portfolio_final)
-    total_final     = calc_total_assets(account_final["cash"], portfolio_final, prices_final)
-    pnl             = total_final - account_final["initial_capital"]
-
-    all_executed = sell_result.get("executed", []) + buy_result.get("executed", [])
-
-    print(f"🏁 完了: 売り{len(sell_result.get('executed',[]))}件 / "
-          f"買い{len(buy_result.get('executed',[]))}件")
-    print(f"📈 総資産: {total_final:,.0f}円 (損益: {pnl:+,.0f}円)")
-
+    pnl = total_after - account_after["initial_capital"]
     return {
-        "status":           "success",
-        "executed_at":      datetime.now().isoformat(),
-        "total_assets":     round(total_final, 0),
-        "pnl":              round(pnl, 0),
-        "executed_trades":  all_executed,
-        "sell_count":       len(sell_result.get("executed", [])),
-        "buy_count":        len(buy_result.get("executed", [])),
+        "status":          "success",
+        "executed_at":     datetime.now().isoformat(),
+        "total_assets":    round(total_after, 0),
+        "pnl":             round(pnl, 0),
+        "executed_trades": all_executed,
+        "sell_count":      len(sell_result.get("executed", [])),
+        "buy_count":       len(buy_result.get("executed", [])),
     }

@@ -51,13 +51,17 @@ def init_db():
         )
     """)
 
-    # portfolioテーブルにファンダメンタル列を追加（既存DBとの互換性）
+    # portfolioテーブルに列を追加（既存DBとの互換性）
     for col, typ in [
         ("buy_per",             "REAL"),
         ("buy_pbr",             "REAL"),
         ("buy_net_cash_ratio",  "REAL"),
         ("target_price",        "REAL"),
         ("catalyst_notes",      "TEXT"),
+        # トレーリングストップ管理（プロ仕様リスク管理）
+        ("peak_price",          "REAL"),   # 購入後の最高値
+        ("trailing_stop",       "REAL"),   # 現在のストップ価格
+        ("partial_taken",       "INTEGER DEFAULT 0"),  # 部分利確済みフラグ
     ]:
         _add_column_if_not_exists(cur, "portfolio", col, typ)
 
@@ -182,14 +186,17 @@ def upsert_holding(
     buy_net_cash_ratio: Optional[float] = None,
     target_price: Optional[float] = None,
     catalyst_notes: Optional[str] = None,
+    peak_price: Optional[float] = None,
+    trailing_stop: Optional[float] = None,
 ):
-    """保有株を追加・更新（ファンダメンタル情報も一緒に保存）"""
+    """保有株を追加・更新（ファンダメンタル＋トレーリングストップ情報も保存）"""
     conn = get_conn()
     conn.execute("""
         INSERT INTO portfolio
             (ticker, company_name, shares, avg_cost,
-             buy_per, buy_pbr, buy_net_cash_ratio, target_price, catalyst_notes)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+             buy_per, buy_pbr, buy_net_cash_ratio, target_price, catalyst_notes,
+             peak_price, trailing_stop)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(ticker) DO UPDATE SET
             shares = ?,
             avg_cost = ?,
@@ -197,10 +204,71 @@ def upsert_holding(
     """, (
         ticker, company_name, shares, avg_cost,
         buy_per, buy_pbr, buy_net_cash_ratio, target_price, catalyst_notes,
+        peak_price, trailing_stop,
         shares, avg_cost, company_name,
     ))
     conn.commit()
     conn.close()
+
+
+def update_trailing_stop(ticker: str, peak_price: float, trailing_stop: float):
+    """トレーリングストップの価格を更新する（毎分実行）"""
+    conn = get_conn()
+    conn.execute(
+        "UPDATE portfolio SET peak_price = ?, trailing_stop = ? WHERE ticker = ?",
+        (peak_price, trailing_stop, ticker)
+    )
+    conn.commit()
+    conn.close()
+
+
+def mark_partial_taken(ticker: str):
+    """部分利確済みフラグを立てる"""
+    conn = get_conn()
+    conn.execute("UPDATE portfolio SET partial_taken = 1 WHERE ticker = ?", (ticker,))
+    conn.commit()
+    conn.close()
+
+
+def get_trade_stats() -> Dict:
+    """取引統計（勝率・平均損益）を計算して返す"""
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT action, ticker, shares, price, total_amount, commission
+        FROM trades ORDER BY executed_at
+    """).fetchall()
+    conn.close()
+
+    buy_map = {}   # ticker → [(shares, price), ...]
+    wins, losses = 0, 0
+    total_pnl = 0.0
+
+    for r in rows:
+        t = r["ticker"]
+        if r["action"] == "buy":
+            if t not in buy_map:
+                buy_map[t] = []
+            buy_map[t].append((r["shares"], r["price"]))
+        elif r["action"] == "sell":
+            if t in buy_map and buy_map[t]:
+                avg_buy = sum(s * p for s, p in buy_map[t]) / sum(s for s, _ in buy_map[t])
+                pnl = (r["price"] - avg_buy) * r["shares"] - r["commission"]
+                total_pnl += pnl
+                if pnl >= 0:
+                    wins += 1
+                else:
+                    losses += 1
+
+    total_trades = wins + losses
+    win_rate = (wins / total_trades * 100) if total_trades > 0 else 0
+
+    return {
+        "total_trades": total_trades,
+        "wins":        wins,
+        "losses":      losses,
+        "win_rate":    round(win_rate, 1),
+        "total_pnl":   round(total_pnl, 0),
+    }
 
 
 def delete_holding(ticker: str):
