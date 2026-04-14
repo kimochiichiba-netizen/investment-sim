@@ -27,6 +27,7 @@
   3. +50% 達成（半分売り、1回のみ）
   4. スクリーニング条件から外れた
 """
+import math
 from datetime import datetime
 from typing import List, Dict, Optional, Tuple
 
@@ -204,6 +205,10 @@ def run_sell_check() -> Dict:
         ticker        = holding["ticker"]
         current_price = prices.get(ticker, holding["avg_cost"])
 
+        # 無効な価格はスキップ
+        if not current_price or current_price <= 0 or math.isnan(float(current_price)):
+            continue
+
         sell_type, reason = _decide_sell(holding, current_price)
         if not sell_type:
             continue
@@ -284,7 +289,8 @@ def run_buy_execution() -> Dict:
             continue
 
         current_price = prices.get(ticker)
-        if not current_price or current_price <= 0:
+        # NaN・None・0 はすべてスキップ
+        if not current_price or current_price <= 0 or math.isnan(current_price):
             continue
 
         # ── テクニカルフィルター（RSI確認）──
@@ -294,8 +300,7 @@ def run_buy_execution() -> Dict:
                 summary = get_stock_summary(ticker)
                 if summary:
                     rsi = summary.get("rsi14")
-                    # RSI が高すぎる（買われすぎ）場合はスキップ
-                    if rsi and rsi > RSI_MAX_FOR_BUY:
+                    if rsi and not math.isnan(rsi) and rsi > RSI_MAX_FOR_BUY:
                         print(f"  ⏸ {ticker} RSI{rsi:.0f} > {RSI_MAX_FOR_BUY}（高すぎ）スキップ")
                         continue
             except Exception:
@@ -306,12 +311,20 @@ def run_buy_execution() -> Dict:
         pos_ratio     = _calc_position_size(total_assets, nc_ratio)
         target_amount = total_assets * pos_ratio
 
+        # NaN チェック（total_assets が NaN になることがある）
+        if math.isnan(target_amount) or math.isnan(total_assets):
+            print(f"  ⏸ {ticker} 資産計算エラー（NaN）スキップ")
+            continue
+
         available_cash = current_cash - total_assets * MIN_CASH_RATIO
         if available_cash < current_price:
             print(f"  ⏸ {ticker} 使える現金不足（{available_cash:,.0f}円）スキップ")
             continue
 
         invest_amount = min(target_amount, available_cash)
+        # NaN ガード（ゼロ除算・NaN を int() に渡さない）
+        if invest_amount <= 0 or math.isnan(invest_amount):
+            continue
         shares = max(1, int(invest_amount / current_price))
 
         trade_amount = current_price * shares
@@ -319,7 +332,10 @@ def run_buy_execution() -> Dict:
         total_cost   = trade_amount + commission
 
         if total_cost > current_cash - total_assets * MIN_CASH_RATIO:
-            shares       = max(1, int((available_cash * 0.99) / current_price))
+            adj = available_cash * 0.99
+            if adj <= 0 or math.isnan(adj):
+                continue
+            shares       = max(1, int(adj / current_price))
             trade_amount = current_price * shares
             commission   = calc_commission(trade_amount)
             total_cost   = trade_amount + commission
