@@ -48,7 +48,7 @@ from stock_data import get_all_watchlist_summaries, WATCHLIST
 
 # リスク管理パラメータ
 MAX_SINGLE_TRADE_RATIO = 0.05   # 1回の取引は総資産の5%まで
-MAX_SINGLE_STOCK_RATIO = 0.20   # 1銘柄は総資産の20%まで
+MAX_SINGLE_STOCK_RATIO = 0.30   # 1銘柄は総資産の30%まで
 MIN_CASH_RATIO         = 0.15   # 現金は総資産の15%以上を維持
 COMMISSION_RATE        = 0.001  # 手数料 0.1%
 MIN_COMMISSION         = 100    # 最低手数料 100円
@@ -158,8 +158,12 @@ def _judge_all_stocks(account: Dict, portfolio: List[Dict],
         free_cash = account["cash"] - total_assets * MIN_CASH_RATIO
         can_afford = free_cash >= price
 
+        # 1銘柄の上限(30%)に余裕があるか確認
+        holding_val = (holding["shares"] * price) if holding else 0
+        within_stock_limit = (holding_val + price) <= total_assets * MAX_SINGLE_STOCK_RATIO
+
         # ── 判断 ──
-        if buy_score >= 40 and buy_score > sell_score and can_afford:
+        if buy_score >= 30 and buy_score > sell_score and can_afford and within_stock_limit:
             reason = "、".join(buy_reasons[:2]) or "総合判断で買い"
             decisions.append({"ticker": ticker, "action": "buy", "reason": reason})
 
@@ -168,8 +172,12 @@ def _judge_all_stocks(account: Dict, portfolio: List[Dict],
             decisions.append({"ticker": ticker, "action": "sell", "reason": reason})
 
         else:
-            # hold の理由は買い・売りどちらが強いかで変える
-            if buy_score > sell_score:
+            # hold の理由を詳しく
+            if not can_afford:
+                reason = "現金不足のため様子見"
+            elif not within_stock_limit:
+                reason = "1銘柄の上限(30%)に達しているため様子見"
+            elif buy_score > sell_score:
                 reason = "、".join(buy_reasons[:1]) + "だが買いサイン弱め" if buy_reasons else "様子見"
             elif sell_score > buy_score:
                 reason = "、".join(sell_reasons[:1]) + "だが売りサイン弱め" if sell_reasons else "様子見"
