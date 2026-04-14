@@ -1,26 +1,38 @@
 """
-自動売買エンジン（Claude AI版）
-Claude APIが相場データを見て、売買判断を行います。
+自動売買エンジン（スコアリング方式・API不要版）
+複数のテクニカル指標を点数化して合算し、売買判断を行います。
+APIキーは一切不要です。
 
-【取引ルール（AIへの指示として渡す内容）】
-- ゴールデンクロス（MA5 > MA25）は上昇サイン
-- RSI14が30以下は「売られすぎ」= 買いチャンス
-- RSI14が70以上は「買われすぎ」= 売りチャンス
-- 含み損が -10% 超えたら損切り推奨
+【スコアリングルール】
+■ 買いスコア（高いほど買いたい）
+  - MA5 > MA25（上昇トレンド）: 最大+30点（差が大きいほど高得点）
+  - RSI14 < 30（売られすぎ）: +35点
+  - RSI14 30〜45（低め）: +20点
+  - 当日値上がり +1.5%超: +15点
+  - 現金比率35%以上（余裕あり）: +10点
+
+■ 売りスコア（高いほど売りたい）
+  - MA5 < MA25（下降トレンド）: 最大+30点
+  - RSI14 > 70（買われすぎ）: +35点
+  - RSI14 60〜70（やや高め）: +15点
+  - 当日値下がり -1.5%超: +15点
+
+■ 強制売り（スコア関係なし）
+  - 含み損が -10% 以下 → 損切り（全株売り）
+
+■ 判断しきい値
+  - 買いスコア >= 55 かつ 買い > 売り → buy
+  - 売りスコア >= 45 かつ 売り > 買い かつ 保有中 → sell
+  - それ以外 → hold
 
 【リスク管理（プログラムで強制するルール）】
-- 1回の取引は総資産の5%以下
-- 1銘柄への投資上限は総資産の20%
-- 現金は常に総資産の30%以上を維持
-- 手数料: 取引額の0.1%（最低100円）
+  - 1回の取引は総資産の5%以下
+  - 1銘柄への投資上限は総資産の20%
+  - 現金は常に総資産の30%以上を維持
+  - 手数料: 取引額の0.1%（最低100円）
 """
-import os
-import json
-import re
 from datetime import datetime
 from typing import List, Dict, Optional
-
-import anthropic
 
 from database import (
     get_account,
@@ -41,20 +53,6 @@ MIN_CASH_RATIO         = 0.30   # 現金は総資産の30%以上を維持
 COMMISSION_RATE        = 0.001  # 手数料 0.1%
 MIN_COMMISSION         = 100    # 最低手数料 100円
 
-# Anthropicクライアント（遅延初期化）
-_client: Optional[anthropic.Anthropic] = None
-
-
-def _get_client() -> anthropic.Anthropic:
-    """Anthropicクライアントを取得（初回のみ初期化）"""
-    global _client
-    if _client is None:
-        api_key = os.getenv("ANTHROPIC_API_KEY")
-        if not api_key:
-            raise ValueError("ANTHROPIC_API_KEY が .env に設定されていません")
-        _client = anthropic.Anthropic(api_key=api_key)
-    return _client
-
 
 def calc_commission(amount: float) -> float:
     """手数料を計算する（0.1%、最低100円）"""
@@ -70,91 +68,111 @@ def calc_total_assets(cash: float, portfolio: List[Dict], prices: Dict[str, floa
     return cash + stock_value
 
 
-def _ask_claude(account: Dict, portfolio: List[Dict],
-                stock_summaries: List[Dict], prices: Dict[str, float]) -> List[Dict]:
+def _judge_all_stocks(account: Dict, portfolio: List[Dict],
+                      stock_summaries: List[Dict], prices: Dict[str, float]) -> List[Dict]:
     """
-    Claude AIに相場分析と売買判断を依頼する
+    スコアリング方式で全銘柄の売買判断をする（API不要）
 
     返り値:
         [{"ticker": "7203.T", "action": "buy"/"sell"/"hold", "reason": "理由"}]
     """
     total_assets = calc_total_assets(account["cash"], portfolio, prices)
+    cash_ratio = account["cash"] / total_assets if total_assets > 0 else 0
 
-    # 保有銘柄の情報を整形
-    holdings_info = []
-    for h in portfolio:
-        price = prices.get(h["ticker"], h["avg_cost"])
-        pnl_pct = (price / h["avg_cost"] - 1) * 100 if h["avg_cost"] else 0
-        holdings_info.append({
-            "ticker": h["ticker"],
-            "会社名": h["company_name"],
-            "保有株数": h["shares"],
-            "取得単価": h["avg_cost"],
-            "現在値": price,
-            "含み損益率": f"{pnl_pct:+.1f}%",
-        })
+    decisions = []
 
-    # 市場データを整形
-    market_data = []
-    for s in stock_summaries:
-        market_data.append({
-            "ticker": s["ticker"],
-            "会社名": s["company_name"],
-            "現在値": s["current_price"],
-            "前日比": f"{s.get('change_pct', 0):+.2f}%",
-            "MA5": s.get("ma5"),
-            "MA25": s.get("ma25"),
-            "RSI14": s.get("rsi14"),
-        })
+    for summary in stock_summaries:
+        ticker      = summary["ticker"]
+        price       = summary["current_price"]
+        ma5         = summary.get("ma5")
+        ma25        = summary.get("ma25")
+        rsi         = summary.get("rsi14")
+        change_pct  = summary.get("change_pct") or 0.0
 
-    prompt = f"""あなたは日本株の自動売買AIです。
-以下の情報をもとに、各銘柄の売買判断をしてください。
+        holding = next((h for h in portfolio if h["ticker"] == ticker), None)
 
-【現在のポートフォリオ】
-- 総資産: {total_assets:,.0f}円
-- 現金: {account['cash']:,.0f}円（現金比率: {account['cash']/total_assets*100:.1f}%）
+        # ── 強制損切りチェック（スコア計算より先に判断）──
+        if holding and holding["shares"] > 0:
+            pnl_pct = (price / holding["avg_cost"] - 1) * 100
+            if pnl_pct <= -10:
+                decisions.append({
+                    "ticker": ticker,
+                    "action": "sell",
+                    "reason": f"損切り（含み損{pnl_pct:.1f}%）",
+                })
+                continue
 
-【保有中の銘柄】
-{json.dumps(holdings_info, ensure_ascii=False, indent=2)}
+        # 指標が揃っていない場合はスキップ
+        if ma5 is None or ma25 is None or rsi is None:
+            decisions.append({
+                "ticker": ticker,
+                "action": "hold",
+                "reason": "指標データ不足のため様子見",
+            })
+            continue
 
-【市場データ（監視銘柄10銘柄）】
-{json.dumps(market_data, ensure_ascii=False, indent=2)}
+        # ── スコア計算 ──
+        buy_score  = 0
+        sell_score = 0
+        buy_reasons  = []
+        sell_reasons = []
 
-【リスク管理ルール（必ず守ること）】
-- 現金比率が30%を切る場合は買わない
-- 1銘柄の保有上限は総資産の20%まで
-- 含み損が-10%を超えた銘柄は売る（損切り）
+        # トレンド判断（MA5とMA25の差の大きさで点数が変わる）
+        ma_diff_pct = abs(ma5 - ma25) / ma25 * 100 if ma25 else 0
+        trend_points = min(30, 10 + ma_diff_pct * 4)
 
-【テクニカル指標の読み方】
-- MA5 > MA25: 上昇トレンド（買いサイン）
-- MA5 < MA25: 下降トレンド（売りサイン）
-- RSI14 < 30: 売られすぎ（反発しやすい = 買いチャンス）
-- RSI14 > 70: 買われすぎ（反落しやすい = 売りチャンス）
+        if ma5 > ma25:
+            buy_score += trend_points
+            buy_reasons.append(f"上昇トレンド(MA差{ma_diff_pct:.1f}%)")
+        else:
+            sell_score += trend_points
+            sell_reasons.append(f"下降トレンド(MA差{ma_diff_pct:.1f}%)")
 
-各銘柄について判断し、**JSONのみ**を返してください（説明文・コードブロック不要）:
-[
-  {{"ticker": "7203.T", "action": "buy", "reason": "30文字以内の理由"}},
-  {{"ticker": "6758.T", "action": "hold", "reason": "30文字以内の理由"}},
-  ...
-]
-"""
+        # RSI判断
+        if rsi < 30:
+            buy_score += 35
+            buy_reasons.append(f"RSI売られすぎ({rsi:.1f})")
+        elif rsi < 45:
+            buy_score += 20
+            buy_reasons.append(f"RSI低め({rsi:.1f})")
+        elif rsi > 70:
+            sell_score += 35
+            sell_reasons.append(f"RSI買われすぎ({rsi:.1f})")
+        elif rsi > 60:
+            sell_score += 15
+            sell_reasons.append(f"RSIやや高め({rsi:.1f})")
 
-    client = _get_client()
-    message = client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=1024,
-        messages=[{"role": "user", "content": prompt}],
-    )
+        # 当日の値動き
+        if change_pct > 1.5:
+            buy_score += 15
+            buy_reasons.append(f"本日+{change_pct:.1f}%上昇")
+        elif change_pct < -1.5:
+            sell_score += 15
+            sell_reasons.append(f"本日{change_pct:.1f}%下落")
 
-    response_text = message.content[0].text.strip()
+        # 現金余裕ボーナス（買いの場合のみ）
+        if cash_ratio >= 0.35:
+            buy_score += 10
 
-    # マークダウンコードブロックが含まれていた場合は除去
-    if "```" in response_text:
-        match = re.search(r"```(?:json)?\s*([\s\S]*?)```", response_text)
-        if match:
-            response_text = match.group(1).strip()
+        # ── 判断 ──
+        if buy_score >= 55 and buy_score > sell_score:
+            reason = "、".join(buy_reasons[:2]) or "総合判断で買い"
+            decisions.append({"ticker": ticker, "action": "buy", "reason": reason})
 
-    decisions = json.loads(response_text)
+        elif sell_score >= 45 and sell_score > buy_score and holding:
+            reason = "、".join(sell_reasons[:2]) or "総合判断で売り"
+            decisions.append({"ticker": ticker, "action": "sell", "reason": reason})
+
+        else:
+            # hold の理由は買い・売りどちらが強いかで変える
+            if buy_score > sell_score:
+                reason = "、".join(buy_reasons[:1]) + "だが買いサイン弱め" if buy_reasons else "様子見"
+            elif sell_score > buy_score:
+                reason = "、".join(sell_reasons[:1]) + "だが売りサイン弱め" if sell_reasons else "様子見"
+            else:
+                reason = "様子見"
+            decisions.append({"ticker": ticker, "action": "hold", "reason": reason})
+
     return decisions
 
 
@@ -225,15 +243,15 @@ def _execute_sell(ticker: str, company_name: str, shares: int, price: float,
 
 def run_ai_trading() -> Dict:
     """
-    AIによる自動取引を実行するメイン関数
+    自動取引を実行するメイン関数
 
     1. 全銘柄の市場データ（株価・テクニカル指標）を取得
-    2. Claude AIに判断を依頼
+    2. スコアリングエンジンで売買判断
     3. 判断を実行
     4. 結果を返す
     """
     print(f"\n{'='*50}")
-    print(f"🤖 AI自動取引開始: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"📊 自動取引開始: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'='*50}")
 
     # 市場データ取得
@@ -250,13 +268,9 @@ def run_ai_trading() -> Dict:
 
     print(f"💰 総資産: {total_assets:,.0f}円 / 現金: {account['cash']:,.0f}円")
 
-    # Claude AIに判断を依頼
-    print("🧠 Claude AIが相場を分析中...")
-    try:
-        decisions = _ask_claude(account, portfolio, stock_summaries, prices)
-    except Exception as e:
-        print(f"❌ Claude API エラー: {e}")
-        return {"status": "error", "message": f"Claude APIエラー: {e}"}
+    # スコアリングエンジンで判断
+    print("🧠 スコアリングエンジンが相場を分析中...")
+    decisions = _judge_all_stocks(account, portfolio, stock_summaries, prices)
 
     executed = []
     skipped  = []
